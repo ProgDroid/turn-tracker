@@ -261,11 +261,10 @@ impl RoomCode {
     /// Generate a random 6-character code from the unambiguous alphabet.
     #[must_use]
     pub fn generate() -> Self {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        // rand 0.10 API: standalone `random_range` over the thread-local RNG.
         let code: String = (0..CODE_LEN)
             .map(|_| {
-                let idx = rng.gen_range(0..CODE_ALPHABET.len());
+                let idx = rand::random_range(0..CODE_ALPHABET.len());
                 CODE_ALPHABET[idx] as char
             })
             .collect();
@@ -334,9 +333,8 @@ Add to `src/domain/ids.rs` (above the `tests` module):
 /// Generate a 256-bit opaque token, hex-encoded (used for player/host auth).
 #[must_use]
 pub fn generate_token() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 32] = rng.gen();
+    // rand 0.10 API: standalone `random()` fills the array from StandardUniform.
+    let bytes: [u8; 32] = rand::random();
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 ```
