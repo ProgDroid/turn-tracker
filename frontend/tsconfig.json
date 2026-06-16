@@ -10,9 +10,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "types": ["vitest/globals"],
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "tests/**/*.ts"]
 }
