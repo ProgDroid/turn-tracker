@@ -79,11 +79,14 @@ impl Room {
         self.players.iter().any(|p| &p.id == id && p.is_host)
     }
 
-    /// Transition Lobby -> Active. The first player in order becomes current.
+    /// Transition Lobby -> Active. Host-only. The first player in order becomes current.
     ///
     /// # Errors
-    /// `TurnError::WrongState` if not in Lobby.
-    pub fn start_game(&mut self, now: Instant) -> Result<(), TurnError> {
+    /// `NotAuthorized` if `actor` is not the host; `WrongState` if not in Lobby.
+    pub fn start_game(&mut self, actor: &PlayerId, now: Instant) -> Result<(), TurnError> {
+        if !self.is_host(actor) {
+            return Err(TurnError::NotAuthorized);
+        }
         if self.state != RoomState::Lobby {
             return Err(TurnError::WrongState);
         }
@@ -232,12 +235,16 @@ impl Room {
             .iter()
             .position(|p| &p.id == target)
             .ok_or(TurnError::NotFound)?;
-        self.players[idx].skip_next = true;
         self.last_active = now;
         if self.state == RoomState::Active && self.current_player_id.as_ref() == Some(target) {
+            // Target is currently active: set the flag, then advance past them.
+            self.players[idx].skip_next = true;
             let next = self.advance_from(idx).ok_or(TurnError::NotFound)?;
             self.previous_player_id = self.current_player_id.take();
             self.current_player_id = Some(self.players[next].id.clone());
+        } else {
+            // Future skip only; no advance needed.
+            self.players[idx].skip_next = true;
         }
         Ok(())
     }
@@ -387,16 +394,23 @@ mod tests {
     fn test_start_game_activates_and_sets_first_player_current() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         room.add_player("Bob".into(), t0());
-        assert!(room.start_game(t0()).is_ok());
+        assert!(room.start_game(&host_id, t0()).is_ok());
         assert_eq!(room.state, RoomState::Active);
         assert_eq!(room.current_player_id, Some(host_id));
     }
 
     #[test]
     fn test_start_game_twice_returns_wrong_state() {
-        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
-        room.start_game(t0()).unwrap();
-        assert_eq!(room.start_game(t0()), Err(TurnError::WrongState));
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        room.start_game(&host_id, t0()).unwrap();
+        assert_eq!(room.start_game(&host_id, t0()), Err(TurnError::WrongState));
+    }
+
+    #[test]
+    fn test_start_game_by_non_host_is_unauthorized() {
+        let (mut room, _host, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        assert_eq!(room.start_game(&bob, t0()), Err(TurnError::NotAuthorized));
     }
 
     #[test]
@@ -432,7 +446,7 @@ mod tests {
     fn test_end_turn_by_current_player_advances() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         assert!(room.end_turn(&host_id, t0()).is_ok());
         assert_eq!(room.current_player_id, Some(bob));
         assert_eq!(room.previous_player_id, Some(host_id));
@@ -440,10 +454,10 @@ mod tests {
 
     #[test]
     fn test_end_turn_by_non_current_non_host_is_unauthorized() {
-        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
         room.add_player("Cara".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         assert_eq!(room.end_turn(&bob, t0()), Err(TurnError::NotAuthorized));
     }
 
@@ -457,7 +471,7 @@ mod tests {
     fn test_claim_turn_by_next_player_succeeds() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         assert!(room.claim_turn(&bob, t0()).is_ok());
         assert_eq!(room.current_player_id, Some(bob));
         assert_eq!(room.previous_player_id, Some(host_id));
@@ -465,10 +479,10 @@ mod tests {
 
     #[test]
     fn test_claim_turn_by_non_next_player_is_not_your_turn() {
-        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         room.add_player("Bob".into(), t0());
         let (cara, _ct) = room.add_player("Cara".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         assert_eq!(room.claim_turn(&cara, t0()), Err(TurnError::NotYourTurn));
     }
 
@@ -478,7 +492,7 @@ mod tests {
     fn test_undo_turn_reverts_to_previous_player() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         room.end_turn(&host_id, t0()).unwrap();
         assert_eq!(room.current_player_id, Some(bob));
         room.undo_turn(&host_id, t0()).unwrap();
@@ -489,7 +503,7 @@ mod tests {
     fn test_undo_turn_by_non_host_is_unauthorized() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         room.end_turn(&host_id, t0()).unwrap();
         assert_eq!(room.undo_turn(&bob, t0()), Err(TurnError::NotAuthorized));
     }
@@ -498,7 +512,7 @@ mod tests {
     fn test_undo_turn_with_no_previous_is_wrong_state() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         assert_eq!(room.undo_turn(&host_id, t0()), Err(TurnError::WrongState));
     }
 
@@ -508,7 +522,7 @@ mod tests {
     fn test_skip_player_flags_future_skip() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         room.skip_player(&host_id, &bob, t0()).unwrap();
         let bob_idx = room.players.iter().position(|p| p.id == bob).unwrap();
         assert!(room.players[bob_idx].skip_next);
@@ -518,7 +532,7 @@ mod tests {
     fn test_skip_current_player_advances_immediately() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         room.skip_player(&host_id, &host_id, t0()).unwrap();
         assert_eq!(room.current_player_id, Some(bob));
     }
@@ -548,7 +562,7 @@ mod tests {
     fn test_remove_current_player_advances_turn() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         room.remove_player(&host_id, &host_id, t0()).unwrap();
         assert_eq!(room.current_player_id, Some(bob));
         assert_eq!(room.players.len(), 1);
@@ -579,7 +593,7 @@ mod tests {
     fn test_set_order_preserves_current_player_by_id() {
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
         let (bob, _bt) = room.add_player("Bob".into(), t0());
-        room.start_game(t0()).unwrap();
+        room.start_game(&host_id, t0()).unwrap();
         room.set_order(&host_id, &[bob, host_id.clone()], t0())
             .unwrap();
         assert_eq!(room.current_player_id, Some(host_id));
@@ -602,7 +616,7 @@ mod tests {
         let now = t0();
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
         let (bob, _bt) = room.add_player("Bob".into(), now);
-        room.start_game(now).unwrap();
+        room.start_game(&host_id, now).unwrap();
         assert_eq!(room.nudge(&bob, now), Ok(host_id));
     }
 
@@ -611,16 +625,16 @@ mod tests {
         let now = t0();
         let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
         room.add_player("Bob".into(), now);
-        room.start_game(now).unwrap();
+        room.start_game(&host_id, now).unwrap();
         assert_eq!(room.nudge(&host_id, now), Err(TurnError::NotAuthorized));
     }
 
     #[test]
     fn test_nudge_within_cooldown_is_rejected() {
         let now = t0();
-        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
         let (bob, _bt) = room.add_player("Bob".into(), now);
-        room.start_game(now).unwrap();
+        room.start_game(&host_id, now).unwrap();
         room.nudge(&bob, now).unwrap();
         let soon = now + Duration::from_secs(5);
         assert_eq!(room.nudge(&bob, soon), Err(TurnError::NudgeOnCooldown));
@@ -629,9 +643,9 @@ mod tests {
     #[test]
     fn test_nudge_after_cooldown_is_allowed() {
         let now = t0();
-        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
         let (bob, _bt) = room.add_player("Bob".into(), now);
-        room.start_game(now).unwrap();
+        room.start_game(&host_id, now).unwrap();
         room.nudge(&bob, now).unwrap();
         let later = now + Duration::from_secs(11);
         assert!(room.nudge(&bob, later).is_ok());

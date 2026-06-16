@@ -171,7 +171,10 @@ async fn handle_join(
             }
             (id, None)
         } else {
-            let name = player_name.unwrap_or_else(|| "Player".into());
+            let name = player_name
+                .map(|n| n.trim().to_owned())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "Player".into());
             let (id, token) = room.add_player(name, now);
             (id, Some(token))
         };

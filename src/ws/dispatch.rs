@@ -18,7 +18,7 @@ pub fn dispatch(
     now: Instant,
 ) -> Vec<Outbound> {
     let result: Result<Vec<Outbound>, TurnError> = match msg {
-        ClientMessage::StartGame => room.start_game(now).map(|()| state_broadcast(room)),
+        ClientMessage::StartGame => room.start_game(actor, now).map(|()| state_broadcast(room)),
         ClientMessage::EndTurn => room.end_turn(actor, now).map(|()| state_broadcast(room)),
         ClientMessage::ClaimTurn => room.claim_turn(actor, now).map(|()| state_broadcast(room)),
         ClientMessage::UndoTurn => room.undo_turn(actor, now).map(|()| state_broadcast(room)),
@@ -73,7 +73,7 @@ mod tests {
         let now = Instant::now();
         let (mut room, host, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
         let (bob, _bt) = room.add_player("Bob".into(), now);
-        room.start_game(now).unwrap();
+        room.start_game(&host, now).unwrap();
         (room, host, bob)
     }
 
