@@ -1,7 +1,10 @@
 //! The Room aggregate and all turn-coordination logic. Pure — no Actix, WS,
 //! serde-wire, or wall-clock dependencies.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Minimum interval between nudges from the same sender.
+pub const NUDGE_COOLDOWN: Duration = Duration::from_secs(10);
 
 use crate::domain::ids::{PlayerId, RoomCode, generate_token};
 use crate::domain::player::Player;
@@ -238,6 +241,112 @@ impl Room {
         }
         Ok(())
     }
+
+    /// Host removes a player from the room and the rotation. If the removed
+    /// player was current, the turn advances to the next eligible player first
+    /// (computed before removal so order is preserved).
+    ///
+    /// # Errors
+    /// `NotAuthorized` if `actor` is not the host; `NotFound` if `target` is
+    /// not present.
+    pub fn remove_player(
+        &mut self,
+        actor: &PlayerId,
+        target: &PlayerId,
+        now: Instant,
+    ) -> Result<(), TurnError> {
+        if !self.is_host(actor) {
+            return Err(TurnError::NotAuthorized);
+        }
+        let idx = self
+            .players
+            .iter()
+            .position(|p| &p.id == target)
+            .ok_or(TurnError::NotFound)?;
+
+        let removing_current =
+            self.state == RoomState::Active && self.current_player_id.as_ref() == Some(target);
+
+        if removing_current {
+            let next = self.advance_from(idx);
+            self.current_player_id = next.map(|i| self.players[i].id.clone());
+        }
+        if self.previous_player_id.as_ref() == Some(target) {
+            self.previous_player_id = None;
+        }
+        self.players.remove(idx);
+        self.last_nudge_at.remove(target);
+        self.last_active = now;
+        Ok(())
+    }
+
+    /// Host reorders the rotation. `order` must be a permutation of exactly the
+    /// current player ids (same set, no additions/removals). The current player
+    /// pointer is preserved (it tracks by id, not position).
+    ///
+    /// # Errors
+    /// `NotAuthorized` if not host; `NotFound` if `order` is not a permutation
+    /// of the existing ids.
+    pub fn set_order(
+        &mut self,
+        actor: &PlayerId,
+        order: &[PlayerId],
+        now: Instant,
+    ) -> Result<(), TurnError> {
+        if !self.is_host(actor) {
+            return Err(TurnError::NotAuthorized);
+        }
+        if order.len() != self.players.len() {
+            return Err(TurnError::NotFound);
+        }
+        let all_present = order
+            .iter()
+            .all(|id| self.players.iter().any(|p| &p.id == id));
+        if !all_present {
+            return Err(TurnError::NotFound);
+        }
+        let mut reordered = Vec::with_capacity(self.players.len());
+        for id in order {
+            if let Some(pos) = self.players.iter().position(|p| &p.id == id) {
+                reordered.push(self.players.remove(pos));
+            }
+        }
+        self.players = reordered;
+        self.last_active = now;
+        Ok(())
+    }
+
+    /// A non-current player nudges the current player. Enforces a per-sender
+    /// cooldown. Returns the current player's id (the nudge target) on success.
+    ///
+    /// # Errors
+    /// `WrongState` if no active turn; `NotAuthorized` if the sender IS the
+    /// current player; `NudgeOnCooldown` if the sender nudged within
+    /// `NUDGE_COOLDOWN`.
+    pub fn nudge(&mut self, sender: &PlayerId, now: Instant) -> Result<PlayerId, TurnError> {
+        let current = self
+            .current_player_id
+            .clone()
+            .ok_or(TurnError::WrongState)?;
+        if &current == sender {
+            return Err(TurnError::NotAuthorized);
+        }
+        if self
+            .last_nudge_at
+            .get(sender)
+            .is_some_and(|&last| now.duration_since(last) < NUDGE_COOLDOWN)
+        {
+            return Err(TurnError::NudgeOnCooldown);
+        }
+        self.last_nudge_at.insert(sender.clone(), now);
+        Ok(current)
+    }
+
+    /// True if the room has been inactive for at least `ttl`.
+    #[must_use]
+    pub fn is_expired(&self, now: Instant, ttl: Duration) -> bool {
+        now.duration_since(self.last_active) >= ttl
+    }
 }
 
 #[cfg(test)]
@@ -422,5 +531,120 @@ mod tests {
             room.skip_player(&bob, &bob, t0()),
             Err(TurnError::NotAuthorized)
         );
+    }
+
+    // --- Task 10: remove_player ---
+
+    #[test]
+    fn test_remove_player_drops_from_order() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.remove_player(&host_id, &bob, t0()).unwrap();
+        assert_eq!(room.players.len(), 1);
+        assert!(!room.players.iter().any(|p| p.id == bob));
+    }
+
+    #[test]
+    fn test_remove_current_player_advances_turn() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        room.remove_player(&host_id, &host_id, t0()).unwrap();
+        assert_eq!(room.current_player_id, Some(bob));
+        assert_eq!(room.players.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_unknown_player_is_not_found() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        assert_eq!(
+            room.remove_player(&host_id, &PlayerId("ghost".into()), t0()),
+            Err(TurnError::NotFound)
+        );
+    }
+
+    // --- Task 11: set_order ---
+
+    #[test]
+    fn test_set_order_reorders_players() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.set_order(&host_id, &[bob.clone(), host_id.clone()], t0())
+            .unwrap();
+        assert_eq!(room.players[0].id, bob);
+        assert_eq!(room.players[1].id, host_id);
+    }
+
+    #[test]
+    fn test_set_order_preserves_current_player_by_id() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        room.set_order(&host_id, &[bob, host_id.clone()], t0())
+            .unwrap();
+        assert_eq!(room.current_player_id, Some(host_id));
+    }
+
+    #[test]
+    fn test_set_order_with_wrong_set_is_rejected() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        room.add_player("Bob".into(), t0());
+        assert_eq!(
+            room.set_order(&host_id, std::slice::from_ref(&host_id), t0()),
+            Err(TurnError::NotFound)
+        );
+    }
+
+    // --- Task 12: nudge ---
+
+    #[test]
+    fn test_nudge_returns_current_player_as_target() {
+        let now = t0();
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        let (bob, _bt) = room.add_player("Bob".into(), now);
+        room.start_game(now).unwrap();
+        assert_eq!(room.nudge(&bob, now), Ok(host_id));
+    }
+
+    #[test]
+    fn test_current_player_cannot_nudge_self() {
+        let now = t0();
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        room.add_player("Bob".into(), now);
+        room.start_game(now).unwrap();
+        assert_eq!(room.nudge(&host_id, now), Err(TurnError::NotAuthorized));
+    }
+
+    #[test]
+    fn test_nudge_within_cooldown_is_rejected() {
+        let now = t0();
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        let (bob, _bt) = room.add_player("Bob".into(), now);
+        room.start_game(now).unwrap();
+        room.nudge(&bob, now).unwrap();
+        let soon = now + Duration::from_secs(5);
+        assert_eq!(room.nudge(&bob, soon), Err(TurnError::NudgeOnCooldown));
+    }
+
+    #[test]
+    fn test_nudge_after_cooldown_is_allowed() {
+        let now = t0();
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        let (bob, _bt) = room.add_player("Bob".into(), now);
+        room.start_game(now).unwrap();
+        room.nudge(&bob, now).unwrap();
+        let later = now + Duration::from_secs(11);
+        assert!(room.nudge(&bob, later).is_ok());
+    }
+
+    // --- Task 13: is_expired ---
+
+    #[test]
+    fn test_is_expired_after_ttl() {
+        let now = t0();
+        let (room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        assert!(!room.is_expired(now, Duration::from_mins(1)));
+        let later = now + Duration::from_secs(61);
+        assert!(room.is_expired(later, Duration::from_mins(1)));
     }
 }
