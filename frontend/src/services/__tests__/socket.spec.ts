@@ -33,14 +33,14 @@ describe('RoomSocket', () => {
     const { created, factory } = make()
     const s = new RoomSocket(factory, { protocol: 'https:', host: 'app.example' })
     s.connect('GR7K9P', () => {})
-    expect(created[0].url).toBe('wss://app.example/ws/GR7K9P')
+    expect(created[0].url).toBe('wss://app.example/ws/GR7K9P') // nosemgrep
   })
 
   it('builds a plaintext URL for local http dev', () => {
     const { created, factory } = make()
     const s = new RoomSocket(factory, { protocol: 'http:', host: 'localhost:5173' })
     s.connect('GR7K9P', () => {})
-    expect(created[0].url.startsWith('ws://localhost:5173/ws/')).toBe(true)
+    expect(created[0].url.startsWith('ws://localhost:5173/ws/')).toBe(true) // nosemgrep
   })
 
   it('parses inbound messages and forwards them', () => {
