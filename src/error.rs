@@ -1,5 +1,4 @@
 //! Application-level error type for HTTP responses.
-#![allow(dead_code)]
 
 use actix_web::{HttpResponse, ResponseError, http::StatusCode};
 

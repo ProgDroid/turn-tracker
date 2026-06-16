@@ -1,6 +1,5 @@
 //! On-the-wire JSON contract. `PublicRoom`/`PublicPlayer` deliberately omit
 //! secret tokens so broadcasts never leak credentials.
-#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

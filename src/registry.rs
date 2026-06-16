@@ -1,5 +1,4 @@
 //! In-memory room storage with a per-room broadcast channel for fan-out.
-#![allow(dead_code)]
 
 use std::time::{Duration, Instant};
 
@@ -102,6 +101,7 @@ impl Registry {
     }
 
     /// Remove rooms idle for at least `ttl`. Returns the number removed.
+    #[must_use]
     pub fn sweep_expired(&self, now: Instant, ttl: Duration) -> usize {
         let expired: Vec<String> = self
             .rooms

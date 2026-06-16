@@ -1,6 +1,5 @@
 //! Translate an authenticated `ClientMessage` into a room mutation plus the
 //! resulting outbound messages. Pure orchestration over the domain layer.
-#![allow(dead_code)]
 
 use std::time::Instant;
 

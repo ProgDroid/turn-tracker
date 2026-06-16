@@ -1,14 +1,6 @@
-mod cleanup;
-mod domain;
-mod error;
-mod registry;
-mod server;
-mod wire;
-mod ws;
-
 use std::sync::Arc;
 
-use registry::Registry;
+use turn_tracker::{cleanup, registry::Registry, server};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
