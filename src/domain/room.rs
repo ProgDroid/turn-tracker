@@ -122,6 +122,122 @@ impl Room {
         }
         None
     }
+
+    /// Advance the turn. Authorized for the current player OR the host.
+    ///
+    /// # Errors
+    /// `WrongState` if not Active; `NotAuthorized` if `actor` is neither the
+    /// current player nor the host.
+    pub fn end_turn(&mut self, actor: &PlayerId, now: Instant) -> Result<(), TurnError> {
+        if self.state != RoomState::Active {
+            return Err(TurnError::WrongState);
+        }
+        let is_current = self.current_player_id.as_ref() == Some(actor);
+        if !is_current && !self.is_host(actor) {
+            return Err(TurnError::NotAuthorized);
+        }
+        self.advance_turn(now)
+    }
+
+    /// "Pull" the turn: the NEXT eligible player claims it early.
+    ///
+    /// # Errors
+    /// `WrongState` if not Active; `NotYourTurn` if `actor` is not the next
+    /// eligible player.
+    pub fn claim_turn(&mut self, actor: &PlayerId, now: Instant) -> Result<(), TurnError> {
+        if self.state != RoomState::Active {
+            return Err(TurnError::WrongState);
+        }
+        let cur_idx = self.current_index().ok_or(TurnError::WrongState)?;
+        let next_idx = self.peek_next(cur_idx).ok_or(TurnError::NotYourTurn)?;
+        if self.players[next_idx].id != *actor {
+            return Err(TurnError::NotYourTurn);
+        }
+        self.advance_turn(now)
+    }
+
+    /// Shared advance: move current -> next eligible, recording previous.
+    fn advance_turn(&mut self, now: Instant) -> Result<(), TurnError> {
+        let cur_idx = self.current_index().ok_or(TurnError::WrongState)?;
+        let next_idx = self.advance_from(cur_idx).ok_or(TurnError::NotFound)?;
+        self.previous_player_id = self.current_player_id.take();
+        self.current_player_id = Some(self.players[next_idx].id.clone());
+        self.last_active = now;
+        Ok(())
+    }
+
+    /// Like `advance_from` but does NOT consume skip flags (read-only peek).
+    fn peek_next(&self, from_index: usize) -> Option<usize> {
+        let n = self.players.len();
+        if n == 0 {
+            return None;
+        }
+        for offset in 1..=n {
+            let idx = (from_index + offset) % n;
+            let p = &self.players[idx];
+            if p.connected && !p.skip_next {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    /// Single-level undo: move the turn back to the immediately previous holder.
+    /// Host-only. Does NOT restore any skip flags consumed by the advance
+    /// (single-step, best-effort revert for fat-finger correction).
+    ///
+    /// # Errors
+    /// `WrongState` if not Active or there is no previous holder; `NotAuthorized`
+    /// if `actor` is not the host; `NotFound` if the previous player no longer exists.
+    pub fn undo_turn(&mut self, actor: &PlayerId, now: Instant) -> Result<(), TurnError> {
+        if !self.is_host(actor) {
+            return Err(TurnError::NotAuthorized);
+        }
+        if self.state != RoomState::Active {
+            return Err(TurnError::WrongState);
+        }
+        let prev = self
+            .previous_player_id
+            .take()
+            .ok_or(TurnError::WrongState)?;
+        if !self.players.iter().any(|p| p.id == prev) {
+            return Err(TurnError::NotFound);
+        }
+        self.current_player_id = Some(prev);
+        self.previous_player_id = None;
+        self.last_active = now;
+        Ok(())
+    }
+
+    /// Host flags a player to be skipped on their next turn. If that player is
+    /// currently active, the turn advances immediately past them.
+    ///
+    /// # Errors
+    /// `NotAuthorized` if `actor` is not the host; `NotFound` if `target` is
+    /// not in the room.
+    pub fn skip_player(
+        &mut self,
+        actor: &PlayerId,
+        target: &PlayerId,
+        now: Instant,
+    ) -> Result<(), TurnError> {
+        if !self.is_host(actor) {
+            return Err(TurnError::NotAuthorized);
+        }
+        let idx = self
+            .players
+            .iter()
+            .position(|p| &p.id == target)
+            .ok_or(TurnError::NotFound)?;
+        self.players[idx].skip_next = true;
+        self.last_active = now;
+        if self.state == RoomState::Active && self.current_player_id.as_ref() == Some(target) {
+            let next = self.advance_from(idx).ok_or(TurnError::NotFound)?;
+            self.previous_player_id = self.current_player_id.take();
+            self.current_player_id = Some(self.players[next].id.clone());
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -199,5 +315,112 @@ mod tests {
         room.add_player("Bob".into(), t0());
         let host_idx = room.players.iter().position(|p| p.id == host_id).unwrap();
         assert_eq!(room.advance_from(1), Some(host_idx));
+    }
+
+    // --- Task 7: end_turn + claim_turn ---
+
+    #[test]
+    fn test_end_turn_by_current_player_advances() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        assert!(room.end_turn(&host_id, t0()).is_ok());
+        assert_eq!(room.current_player_id, Some(bob));
+        assert_eq!(room.previous_player_id, Some(host_id));
+    }
+
+    #[test]
+    fn test_end_turn_by_non_current_non_host_is_unauthorized() {
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.add_player("Cara".into(), t0());
+        room.start_game(t0()).unwrap();
+        assert_eq!(room.end_turn(&bob, t0()), Err(TurnError::NotAuthorized));
+    }
+
+    #[test]
+    fn test_end_turn_in_lobby_is_wrong_state() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        assert_eq!(room.end_turn(&host_id, t0()), Err(TurnError::WrongState));
+    }
+
+    #[test]
+    fn test_claim_turn_by_next_player_succeeds() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        assert!(room.claim_turn(&bob, t0()).is_ok());
+        assert_eq!(room.current_player_id, Some(bob));
+        assert_eq!(room.previous_player_id, Some(host_id));
+    }
+
+    #[test]
+    fn test_claim_turn_by_non_next_player_is_not_your_turn() {
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        room.add_player("Bob".into(), t0());
+        let (cara, _ct) = room.add_player("Cara".into(), t0());
+        room.start_game(t0()).unwrap();
+        assert_eq!(room.claim_turn(&cara, t0()), Err(TurnError::NotYourTurn));
+    }
+
+    // --- Task 8: undo_turn ---
+
+    #[test]
+    fn test_undo_turn_reverts_to_previous_player() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        room.end_turn(&host_id, t0()).unwrap();
+        assert_eq!(room.current_player_id, Some(bob));
+        room.undo_turn(&host_id, t0()).unwrap();
+        assert_eq!(room.current_player_id, Some(host_id));
+    }
+
+    #[test]
+    fn test_undo_turn_by_non_host_is_unauthorized() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        room.end_turn(&host_id, t0()).unwrap();
+        assert_eq!(room.undo_turn(&bob, t0()), Err(TurnError::NotAuthorized));
+    }
+
+    #[test]
+    fn test_undo_turn_with_no_previous_is_wrong_state() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        assert_eq!(room.undo_turn(&host_id, t0()), Err(TurnError::WrongState));
+    }
+
+    // --- Task 9: skip_player ---
+
+    #[test]
+    fn test_skip_player_flags_future_skip() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        room.skip_player(&host_id, &bob, t0()).unwrap();
+        let bob_idx = room.players.iter().position(|p| p.id == bob).unwrap();
+        assert!(room.players[bob_idx].skip_next);
+    }
+
+    #[test]
+    fn test_skip_current_player_advances_immediately() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        room.start_game(t0()).unwrap();
+        room.skip_player(&host_id, &host_id, t0()).unwrap();
+        assert_eq!(room.current_player_id, Some(bob));
+    }
+
+    #[test]
+    fn test_skip_player_by_non_host_is_unauthorized() {
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        assert_eq!(
+            room.skip_player(&bob, &bob, t0()),
+            Err(TurnError::NotAuthorized)
+        );
     }
 }
