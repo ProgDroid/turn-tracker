@@ -8,7 +8,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -19,3 +19,17 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image (validate Dockerfile, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: turn-tracker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
