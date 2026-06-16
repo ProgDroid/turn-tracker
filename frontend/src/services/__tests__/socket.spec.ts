@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { RoomSocket } from '@/services/socket'
 import type { ServerMessage } from '@/types/wire'
 
@@ -60,5 +60,17 @@ describe('RoomSocket', () => {
     created[0].emitOpen()
     s.send({ type: 'end_turn' })
     expect(created[0].sent).toEqual(['{"type":"end_turn"}'])
+  })
+
+  it('reconnecting to a different room tears down the old socket without spawning extras', () => {
+    const { created, factory } = make()
+    const s = new RoomSocket(factory, { protocol: 'https:', host: 'h' })
+    s.connect('A', () => {})
+    created[0].emitOpen()
+    s.connect('B', () => {})
+    const count = created.length // 2 sockets created so far
+    created[0].close() // old socket closes late; its handlers were detached -> no reconnect
+    expect(created.length).toBe(count) // no spurious third socket
+    expect(created[1].url).toContain('/ws/B')
   })
 })

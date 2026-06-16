@@ -31,6 +31,16 @@ export class RoomSocket {
   }
 
   connect(code: string, onMessage: OnMessage) {
+    if (this.ws) {
+      this.ws.onopen = null
+      this.ws.onmessage = null
+      this.ws.onclose = null
+      this.ws.onerror = null
+      this.ws.close()
+      this.ws = null
+    }
+    if (this.timer) { clearTimeout(this.timer); this.timer = null }
+    this.attempts = 0
     this.code = code
     this.onMessage = onMessage
     this.closedByUs = false
@@ -65,7 +75,6 @@ export class RoomSocket {
   private scheduleReconnect() {
     this.attempts += 1
     const delay = Math.min(BACKOFF_MAX, BACKOFF_BASE * 2 ** (this.attempts - 1))
-    this.onStatus('reconnecting')
     this.timer = setTimeout(() => this.open(), delay)
   }
 
