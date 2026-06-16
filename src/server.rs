@@ -39,8 +39,8 @@ pub async fn create_room(
 /// Build the Actix `App`. Registry is injected as shared state.
 pub fn config(cfg: &mut web::ServiceConfig, registry: Arc<Registry>) {
     cfg.app_data(web::Data::new(registry))
-        .route("/api/rooms", web::post().to(create_room));
-    // WS route is added in Task 19.
+        .route("/api/rooms", web::post().to(create_room))
+        .route("/ws/{code}", web::get().to(crate::ws::connection::ws_route));
 }
 
 /// Run the HTTP server, serving the SPA build from `static_dir`.
