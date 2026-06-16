@@ -1,0 +1,67 @@
+{
+  "appName": "Turn Tracker",
+  "landing": {
+    "createTitle": "Start a game room",
+    "createSubtitle": "You'll get a code to share. Everyone joins on their own phone — no app, no sign-up.",
+    "yourName": "Your name",
+    "createCta": "Create room",
+    "joinPrompt": "Joining instead? Enter a code",
+    "joinTitle": "Join a room",
+    "joinSubtitle": "Type the 6-character code from the host.",
+    "joinCta": "Join"
+  },
+  "lobby": {
+    "roomCode": "Room code",
+    "copyLink": "Copy link",
+    "showQr": "Show QR",
+    "copied": "Copied to clipboard",
+    "players": "Players",
+    "dragToReorder": "Drag to reorder",
+    "host": "Host",
+    "connecting": "connecting…",
+    "startGame": "Start game",
+    "waitingForHost": "Waiting for {host} to start…",
+    "waitingHint": "Hang tight — the game begins the moment the host taps Start. Keep this screen open.",
+    "you": "(you)"
+  },
+  "active": {
+    "yourTurnEyebrow": "Your turn",
+    "yourTurnTitle": "It's your turn",
+    "yourTurnHint": "Make your move, then tap Done.",
+    "done": "DONE",
+    "tapAnywhere": "tap anywhere here",
+    "currentTurn": "Current turn",
+    "turnOf": "{name}'s turn",
+    "away": "{n} away",
+    "upNext": "Up next",
+    "nudge": "Nudge {name}",
+    "nudgeWait": "Wait {n}s",
+    "nudgeHint": "A gentle buzz on their phone · 10s cooldown",
+    "youreUpNext": "You're up next",
+    "finishingTurn": "{name} is finishing their turn",
+    "claimHint": "Ready to go now? Pull your turn forward instead of waiting for the tap.",
+    "claim": "Claim my turn",
+    "wait": "Wait my turn",
+    "screenAwake": "Screen stays awake",
+    "soundBuzz": "Sound + buzz"
+  },
+  "host": {
+    "skipTurn": "Skip this turn",
+    "undoTurn": "Undo last turn",
+    "reorder": "Reorder players",
+    "remove": "Remove from room",
+    "current": "Current"
+  },
+  "nudge": { "nudgedYou": "{name} nudged you!", "waiting": "Everyone's waiting on your move." },
+  "status": { "connected": "connected", "disconnected": "disconnected", "skipped": "SKIPPED" },
+  "errors": {
+    "not_authorized": "Only the host can do that",
+    "not_found": "Room not found",
+    "wrong_state": "That action isn't valid right now",
+    "not_your_turn": "It's not your turn yet",
+    "nudge_cooldown": "Nudge on cooldown — try again in a few seconds",
+    "generic": "Something went wrong",
+    "reconnecting": "Reconnecting…",
+    "reconnectingHint": "Hang on, we'll resync your turn."
+  }
+}
