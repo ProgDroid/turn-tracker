@@ -28,6 +28,9 @@ async function mountAt(code: string) {
   router.push(`/room/${code}`)
   await router.isReady()
   const wrapper = mount(RoomView, { props: { code }, global: { plugins: [router, i18n] } })
+  // Drain the microtask queue so onMounted's queueMicrotask(() => store.join())
+  // has run and the join is observable on the fake socket.
+  await flushPromises()
   return { wrapper, router, store }
 }
 
@@ -38,6 +41,8 @@ describe('RoomView', () => {
     const { store } = await mountAt('GR7K9P')
     expect(store.codeInView).toBe('GR7K9P')
     expect(store.socket!.connect).toHaveBeenCalled()
+    // join is dispatched after connect via queueMicrotask → fake socket send.
+    expect(store.socket!.send).toHaveBeenCalled()
   })
 
   it('routes home when the room is gone', async () => {
