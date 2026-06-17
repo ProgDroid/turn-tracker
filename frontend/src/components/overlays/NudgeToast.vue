@@ -6,11 +6,9 @@ import { useRoomStore } from '@/stores/room'
 const { t } = useI18n()
 const store = useRoomStore()
 const visible = ref(false)
-const fromName = ref('')
 
 watch(() => store.nudgeReceivedAt, (at) => {
   if (!at) return
-  fromName.value = store.currentPlayer?.name ?? ''
   visible.value = true
   setTimeout(() => (visible.value = false), 3000)
 })
@@ -20,7 +18,7 @@ watch(() => store.nudgeReceivedAt, (at) => {
   <div v-if="visible" class="nudge-toast" role="alert" aria-live="assertive">
     <span class="emoji">👋</span>
     <div>
-      <div class="title">{{ t('nudge.nudgedYou', { name: fromName }) }}</div>
+      <div class="title">{{ t('nudge.nudgedYou') }}</div>
       <div class="sub">{{ t('nudge.waiting') }}</div>
     </div>
   </div>

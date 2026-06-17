@@ -52,7 +52,7 @@
     "remove": "Remove from room",
     "current": "Current"
   },
-  "nudge": { "nudgedYou": "{name} nudged you!", "waiting": "Everyone's waiting on your move." },
+  "nudge": { "nudgedYou": "You've been nudged!", "waiting": "Everyone's waiting on your move." },
   "status": { "connected": "connected", "disconnected": "disconnected", "skipped": "SKIPPED" },
   "errors": {
     "not_authorized": "Only the host can do that",
