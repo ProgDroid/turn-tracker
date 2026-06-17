@@ -17,6 +17,8 @@ export class RoomSocket {
   private attempts = 0
   private closedByUs = false
   private timer: ReturnType<typeof setTimeout> | null = null
+  /** Messages queued while the socket is still in CONNECTING state. */
+  private sendQueue: string[] = []
 
   constructor(
     private factory: WSFactory = (url) => new WebSocket(url),
@@ -44,6 +46,7 @@ export class RoomSocket {
     this.code = code
     this.onMessage = onMessage
     this.closedByUs = false
+    this.sendQueue = []
     this.open()
   }
 
@@ -54,6 +57,9 @@ export class RoomSocket {
     ws.onopen = () => {
       this.attempts = 0
       this.onStatus('open')
+      // Flush any messages that were queued while the socket was connecting.
+      for (const raw of this.sendQueue) ws.send(raw)
+      this.sendQueue = []
     }
     ws.onmessage = (e: MessageEvent) => {
       try {
@@ -79,7 +85,13 @@ export class RoomSocket {
   }
 
   send(msg: ClientMessage) {
-    this.ws?.send(JSON.stringify(msg))
+    const raw = JSON.stringify(msg)
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(raw)
+    } else {
+      // Socket is still connecting (or reconnecting) — queue the message.
+      this.sendQueue.push(raw)
+    }
   }
 
   close() {

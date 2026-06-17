@@ -47,12 +47,26 @@ async fn test_create_then_join_and_start_flow() {
         .await
         .unwrap();
 
+    // Token re-join now always sends Welcome first so the client can set `me`.
+    let frame = conn.next().await.unwrap().unwrap();
+    if let awc::ws::Frame::Text(bytes) = frame {
+        let msg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            msg["type"], "welcome",
+            "expected welcome before room_state; got {msg}"
+        );
+        assert!(msg["player_id"].is_string());
+        assert!(msg["token"].is_string());
+    } else {
+        panic!("expected text frame for welcome");
+    }
+
     let frame = conn.next().await.unwrap().unwrap();
     if let awc::ws::Frame::Text(bytes) = frame {
         let msg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(msg["type"], "room_state");
         assert_eq!(msg["room"]["state"], "lobby");
     } else {
-        panic!("expected text frame");
+        panic!("expected text frame for room_state");
     }
 }

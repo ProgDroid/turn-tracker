@@ -40,8 +40,8 @@ function join() {
       <h1>{{ t('landing.createTitle') }}</h1>
       <p>{{ t('landing.createSubtitle') }}</p>
       <label>{{ t('landing.yourName') }}</label>
-      <input data-test="name" v-model="name" class="field" />
-      <AppButton data-test="create" :disabled="!name.trim()" @click="create">
+      <input data-test="name" data-testid="name" v-model="name" class="field" />
+      <AppButton data-test="create" data-testid="create" :disabled="!name.trim()" @click="create">
         {{ t('landing.createCta') }}
       </AppButton>
       <button class="link" @click="mode = 'join'">{{ t('landing.joinPrompt') }}</button>
