@@ -2,10 +2,7 @@
 FROM node:22-alpine AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-# npm install (not npm ci): the lockfile is generated on Windows, whose native
-# binary deps (rolldown/lightningcss/@emnapi) diverge from Linux, so a strict
-# `npm ci` rejects it. `npm install` heals the cross-platform drift.
-RUN npm install --no-audit --no-fund
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
