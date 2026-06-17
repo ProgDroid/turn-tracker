@@ -20,11 +20,12 @@ describe('PlayerRow', () => {
     expect(w.text().toLowerCase()).toContain('disconnected')
   })
 
-  it('shows skipped state with label', () => {
+  it('shows skipped state with label and amber-framed row', () => {
     const w = mount(PlayerRow, {
       props: { player: { ...player, is_host: false }, skipped: true },
       global: { plugins: [i18n] },
     })
     expect(w.text().toUpperCase()).toContain('SKIPPED')
+    expect(w.find('.row').classes()).toContain('skipped')
   })
 })

@@ -42,6 +42,7 @@ watch(() => props.modelValue, (v) => { if (v !== undefined) value.value = v })
   border-radius: var(--tt-r-md);
   color: var(--tt-text);
   padding: var(--tt-4);
+  min-height: 56px;
   font-size: 24px;
   text-align: center;
 }

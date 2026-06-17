@@ -16,7 +16,7 @@ watch(() => store.nudgeReceivedAt, (at) => {
 
 <template>
   <div v-if="visible" class="nudge-toast" role="alert" aria-live="assertive">
-    <span class="emoji">👋</span>
+    <span class="emoji" aria-hidden="true">👋</span>
     <div>
       <div class="title">{{ t('nudge.nudgedYou') }}</div>
       <div class="sub">{{ t('nudge.waiting') }}</div>

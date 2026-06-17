@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useRoomStore } from '@/stores/room'
 import LobbySubview from '@/components/lobby/LobbySubview.vue'
@@ -11,6 +12,7 @@ import { chime } from '@/services/sound'
 import { acquire, release } from '@/services/wakeLock'
 
 const props = defineProps<{ code: string }>()
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const store = useRoomStore()
@@ -53,7 +55,7 @@ watch(() => store.roomGone, (gone) => { if (gone) router.replace('/') })
     <NudgeToast />
     <LobbySubview v-if="store.phase === 'lobby'" />
     <ActiveSubview v-else-if="store.phase === 'active'" />
-    <div v-else class="connecting">Connecting…</div>
+    <div v-else class="connecting">{{ t('lobby.connecting') }}</div>
   </main>
 </template>
 

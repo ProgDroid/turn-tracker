@@ -23,3 +23,7 @@ body {
 @keyframes ttBlink { 50% { opacity: .3; } }
 @keyframes ttSpin { to { transform: rotate(360deg); } }
 @keyframes ttSheen { 0% { transform: translateX(-120%); } 60%,100% { transform: translateX(320%); } }
+/* Becoming-current hero: emerald floods in (radial wipe) and the title rises 12px. */
+@keyframes ttHeroWipe { from { clip-path: circle(0% at 50% 88%); } to { clip-path: circle(150% at 50% 88%); } }
+@keyframes ttRise { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes ttFade { from { opacity: 0; } to { opacity: 1; } }

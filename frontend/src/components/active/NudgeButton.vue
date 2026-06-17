@@ -18,7 +18,7 @@ const label = computed(() =>
 <template>
   <button class="nudge" :class="{ cooling }" @click="store.nudge()">
     <span v-if="cooling" class="bar" :style="{ width: pct + '%' }" aria-hidden="true" />
-    <span class="emoji">👋</span>
+    <span class="emoji" aria-hidden="true">👋</span>
     <span class="label">{{ label }}</span>
   </button>
 </template>

@@ -18,7 +18,7 @@
     "players": "Players",
     "dragToReorder": "Drag to reorder",
     "host": "Host",
-    "connecting": "connecting…",
+    "connecting": "Connecting…",
     "startGame": "Start game",
     "waitingForHost": "Waiting for {host} to start…",
     "waitingHint": "Hang tight — the game begins the moment the host taps Start. Keep this screen open.",
@@ -29,10 +29,12 @@
     "yourTurnTitle": "It's your turn",
     "yourTurnHint": "Make your move, then tap Done.",
     "done": "DONE",
-    "tapAnywhere": "tap anywhere here",
+    "roomTag": "Room {code}",
+    "playerCount": "{n} players",
     "currentTurn": "Current turn",
     "turnOf": "{name}'s turn",
     "away": "{n} away",
+    "youLabel": "You",
     "upNext": "Up next",
     "nudge": "Nudge {name}",
     "nudgeWait": "Wait {n}s",
@@ -41,16 +43,22 @@
     "finishingTurn": "{name} is finishing their turn",
     "claimHint": "Ready to go now? Pull your turn forward instead of waiting for the tap.",
     "claim": "Claim my turn",
-    "wait": "Wait my turn",
-    "screenAwake": "Screen stays awake",
-    "soundBuzz": "Sound + buzz"
+    "wait": "Wait my turn"
   },
   "host": {
+    "open": "Host",
+    "openA11y": "Host controls",
+    "title": "Host controls",
+    "taking": "Taking their turn now",
     "skipTurn": "Skip this turn",
+    "skipHint": "advance past {name}",
     "undoTurn": "Undo last turn",
+    "undoHint": "back to the previous player",
     "reorder": "Reorder players",
+    "reorderHint": "drag to set the turn order",
     "remove": "Remove from room",
-    "current": "Current"
+    "current": "Current",
+    "done": "Done"
   },
   "nudge": { "nudgedYou": "You've been nudged!", "waiting": "Everyone's waiting on your move." },
   "status": { "connected": "connected", "disconnected": "disconnected", "skipped": "SKIPPED" },
@@ -60,8 +68,9 @@
     "wrong_state": "That action isn't valid right now",
     "not_your_turn": "It's not your turn yet",
     "nudge_cooldown": "Nudge on cooldown — try again in a few seconds",
+    "room_full": "This room is full",
+    "bad_name": "Name must be 1–40 characters",
     "generic": "Something went wrong",
-    "reconnecting": "Reconnecting…",
-    "reconnectingHint": "Hang on, we'll resync your turn."
+    "reconnecting": "Reconnecting…"
   }
 }

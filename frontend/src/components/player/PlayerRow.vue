@@ -13,7 +13,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div class="row" :class="{ dim: !player.connected }">
+  <div class="row" :class="{ dim: !player.connected, skipped: skipped && !player.is_host }">
     <span v-if="draggable" class="handle" aria-hidden="true"><i /><i /><i /></span>
     <Avatar :name="player.name" :accent="player.is_host" />
     <span class="name">
@@ -39,6 +39,7 @@ const { t } = useI18n()
   border: 1px solid var(--tt-border);
 }
 .row.dim { opacity: 0.65; background: var(--tt-surface-1); }
+.row.skipped { border-color: rgba(251, 191, 36, 0.25); }
 .handle { display: flex; flex-direction: column; gap: 3px; }
 .handle i { width: 16px; height: 2px; background: var(--tt-text-faint); border-radius: 2px; }
 .name { flex: 1; font-size: 15px; font-weight: 600; color: var(--tt-text); }

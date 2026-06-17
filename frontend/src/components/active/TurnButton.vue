@@ -20,7 +20,7 @@ const { t } = useI18n()
   position: relative; overflow: hidden; box-shadow: inset 0 -5px 0 rgba(0, 0, 0, .45);
 }
 .turn.disabled { background: var(--tt-surface-1); color: var(--tt-text-faint); box-shadow: none; cursor: default; }
-.turn:active:not(.disabled) { transform: scale(.985); }
+.turn:active:not(.disabled) { transform: scale(.985); background: #021f12; color: var(--tt-accent-strong); }
 .sheen { position: absolute; top: 0; bottom: 0; width: 60px; background: linear-gradient(90deg, transparent, rgba(52,211,153,.22), transparent); animation: ttSheen 3.2s ease-in-out infinite; }
 .label { position: relative; }
 @media (prefers-reduced-motion: reduce) { .sheen { animation: none; } }

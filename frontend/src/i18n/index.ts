@@ -12,6 +12,7 @@ export const i18n = createI18n({
 export function errorKey(code: string): string {
   const known = [
     'not_authorized', 'not_found', 'wrong_state', 'not_your_turn', 'nudge_cooldown',
+    'room_full', 'bad_name',
   ]
   return known.includes(code) ? `errors.${code}` : 'errors.generic'
 }
