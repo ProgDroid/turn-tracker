@@ -1,5 +1,6 @@
 target
 .git
 docs
-frontend
 static
+frontend/node_modules
+frontend/dist

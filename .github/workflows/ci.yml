@@ -32,7 +32,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      # npm install (not npm ci): the committed lockfile is generated on Windows,
+      # whose native binary deps (rolldown/lightningcss/@emnapi) diverge from
+      # Linux; a strict `npm ci` rejects it. `npm install` heals the drift.
+      - run: npm install --no-audit --no-fund
       - run: npm run build
       - run: npm run test
 
