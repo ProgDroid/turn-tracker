@@ -1,3 +1,11 @@
+# ---- frontend build ----
+FROM node:22-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 # ---- build ----
 FROM rust:1-bookworm AS build
 WORKDIR /app
@@ -10,7 +18,7 @@ FROM debian:bookworm-slim
 RUN useradd -m app
 WORKDIR /home/app
 COPY --from=build /app/target/release/turn-tracker /usr/local/bin/turn-tracker
-# The static SPA build is copied/mounted to ./static at deploy time.
+COPY --from=frontend /app/frontend/dist /home/app/static
 ENV BIND_ADDR=0.0.0.0:8080
 ENV STATIC_DIR=/home/app/static
 USER app

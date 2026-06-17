@@ -162,14 +162,17 @@ async fn handle_join(
     let now = Instant::now();
     let resolved = registry.with_room_mut(code, |room| {
         // Re-attach by token if provided, otherwise None → new player.
-        let existing: Option<PlayerId> =
-            player_token.and_then(|tok| room.player_by_token(&tok).map(|p| p.id.clone()));
+        let existing: Option<(PlayerId, String)> = player_token.and_then(|tok| {
+            room.player_by_token(&tok)
+                .map(|p| (p.id.clone(), p.token.clone()))
+        });
 
-        let (id, fresh_token) = if let Some(id) = existing {
+        let (id, fresh_token) = if let Some((id, token)) = existing {
             if let Some(p) = room.players.iter_mut().find(|p| p.id == id) {
                 p.connected = true;
             }
-            (id, None)
+            // Always send Welcome on (re-)join so the client can set `me`.
+            (id, Some(token))
         } else {
             let name = player_name
                 .map(|n| n.trim().to_owned())

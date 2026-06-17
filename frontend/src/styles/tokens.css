@@ -1,0 +1,36 @@
+:root {
+  /* surfaces */
+  --tt-surface-0: #0a0a0c;
+  --tt-surface-1: #141418;
+  --tt-surface-2: #1c1c21;
+  --tt-surface-3: #2a2a31;
+  --tt-border: #2e2e36;
+  /* text */
+  --tt-text: #f4f4f5; --tt-text-muted: #a1a1aa; --tt-text-faint: #6b6b75;
+  /* accent — "your turn" owns this color */
+  --tt-accent: #34d399;
+  --tt-accent-strong: #10b981;
+  --tt-accent-glow: rgba(52, 211, 153, 0.55);
+  --tt-on-accent: #04140d;
+  /* semantic roles */
+  --tt-success: #34d399; --tt-danger: #fb7185; --tt-on-danger: #2a0710;
+  --tt-warning: #fbbf24; --tt-info: #38bdf8;
+  /* type */
+  --tt-font-sans: "Hanken Grotesk", system-ui, sans-serif;
+  --tt-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --tt-fs-display: 64px; --tt-fs-h1: 32px; --tt-fs-h2: 24px;
+  --tt-fs-body: 16px; --tt-fs-sm: 14px; --tt-fs-xs: 12px;
+  /* spacing (4px base) */
+  --tt-1: 4px; --tt-2: 8px; --tt-3: 12px; --tt-4: 16px;
+  --tt-5: 24px; --tt-6: 32px; --tt-7: 48px; --tt-8: 64px;
+  /* radii */
+  --tt-r-sm: 8px; --tt-r-md: 12px; --tt-r-lg: 18px; --tt-r-xl: 24px; --tt-r-full: 999px;
+  /* elevation */
+  --tt-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.7);
+  --tt-shadow-lg: 0 24px 50px -16px rgba(0, 0, 0, 0.8);
+  --tt-glow: 0 0 28px -2px var(--tt-accent-glow);
+  /* motion */
+  --tt-dur-fast: 120ms; --tt-dur: 200ms; --tt-dur-slow: 320ms; --tt-dur-hero: 560ms;
+  --tt-ease: cubic-bezier(0.2, 0, 0, 1);
+  --tt-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
