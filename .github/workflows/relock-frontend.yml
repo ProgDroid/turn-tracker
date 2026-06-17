@@ -1,24 +1,19 @@
 name: Relock frontend (Linux, one-shot)
 
-# One-shot bootstrap. On the next push to main it:
-#   1. regenerates frontend/package-lock.json on Linux,
-#   2. verifies it passes strict `npm ci` + build + test,
-#   3. flips the CI frontend job and Docker frontend stage back to `npm ci`,
-#   4. deletes ITSELF so it never runs again,
-# and commits all of that. Added because the Windows-generated lockfile can't
-# satisfy Linux `npm ci` and this dev machine can't produce a Linux lockfile
-# (no WSL/Docker). See memory: frontend-ci-lockfile.
-#
-# Note: the migration commit is pushed with GITHUB_TOKEN, which by design does
-# NOT trigger a new CI run — but `npm ci` + build + test are already verified
-# in step 2 below, and the next human push will exercise the normal CI.
+# One-shot helper: regenerates frontend/package-lock.json on Linux, verifies it
+# passes strict `npm ci` + build + test, and uploads it as an artifact. A human
+# then downloads the artifact, commits it alongside the `npm install` -> `npm ci`
+# switch, and deletes this workflow. Needed because the Windows-generated lockfile
+# can't satisfy Linux `npm ci` and this dev machine can't produce a Linux lockfile
+# (no WSL/Docker). The default GITHUB_TOKEN may not modify workflow files, so this
+# only produces an artifact — it does not push. See memory: frontend-ci-lockfile.
 
 on:
   push:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   relock:
@@ -28,11 +23,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Regenerate lockfile on Linux
         working-directory: frontend
         run: npm install --no-audit --no-fund
-
       - name: Verify it passes strict npm ci + build + test
         working-directory: frontend
         run: |
@@ -40,25 +33,9 @@ jobs:
           npm ci
           npm run build
           npm run test
-
-      - name: Adopt lockfile, restore npm ci, remove this workflow, commit
-        run: |
-          set -euo pipefail
-          # Flip the CI frontend job back to strict npm ci (drop the 3-line
-          # explanatory comment, then the run line).
-          sed -i '/# npm install (not npm ci)/,+2d' .github/workflows/ci.yml
-          sed -i 's|- run: npm install --no-audit --no-fund|- run: npm ci|' .github/workflows/ci.yml
-          # Same for the Docker frontend stage.
-          sed -i '/# npm install (not npm ci)/,+2d' Dockerfile
-          sed -i 's|RUN npm install --no-audit --no-fund|RUN npm ci|' Dockerfile
-          # This one-shot has done its job — delete it.
-          git rm .github/workflows/relock-frontend.yml
-          git add frontend/package-lock.json .github/workflows/ci.yml Dockerfile
-          if git diff --cached --quiet; then
-            echo "Nothing to migrate — already done."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(frontend): adopt Linux lockfile, restore strict npm ci [skip ci]"
-          git push
+      - name: Upload the Linux lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-package-lock
+          path: frontend/package-lock.json
+          if-no-files-found: error
