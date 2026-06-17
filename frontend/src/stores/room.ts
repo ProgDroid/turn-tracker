@@ -86,7 +86,12 @@ export const useRoomStore = defineStore('room', {
   actions: {
     _setSocket(sock: SocketLike) {
       this.socket = sock
-      sock.onStatusChange((st) => { this.connStatus = st })
+      sock.onStatusChange((st) => {
+        this.connStatus = st
+        // Terminal 'gone' = reconnect cap exhausted against a room that no
+        // longer exists (e.g. server restart). Trigger room-gone recovery.
+        if (st === 'gone') this.roomGone = true
+      })
     },
 
     ensureSocket() {

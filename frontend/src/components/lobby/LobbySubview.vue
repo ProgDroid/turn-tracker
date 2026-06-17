@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoomStore } from '@/stores/room'
 import ShareCodeBlock from './ShareCodeBlock.vue'
@@ -9,6 +9,20 @@ import AppButton from '@/components/ui/AppButton.vue'
 const { t } = useI18n()
 const store = useRoomStore()
 const hostName = computed(() => store.room?.players.find((p) => p.is_host)?.name ?? '')
+
+// Drag-to-reorder (host only). We track the dragged row's index in our own ref
+// rather than relying on dataTransfer, so the logic is browser- and test-stable.
+const dragIndex = ref<number | null>(null)
+function onDragStart(i: number) { dragIndex.value = i }
+function onDrop(to: number) {
+  const from = dragIndex.value
+  dragIndex.value = null
+  if (from === null || from === to || !store.room) return
+  const ids = store.room.players.map((p) => p.id)
+  const [moved] = ids.splice(from, 1)
+  ids.splice(to, 0, moved)
+  store.setOrder(ids)
+}
 </script>
 
 <template>
@@ -21,11 +35,14 @@ const hostName = computed(() => store.room?.players.find((p) => p.is_host)?.name
       </div>
       <div class="list">
         <PlayerRow
-          v-for="p in store.room.players"
+          v-for="(p, i) in store.room.players"
           :key="p.id"
           :player="p"
           :is-you="p.id === store.me?.playerId"
           draggable
+          @dragstart="onDragStart(i)"
+          @dragover.prevent
+          @drop="onDrop(i)"
         />
       </div>
       <AppButton class="start" @click="store.startGame()">{{ t('lobby.startGame') }}</AppButton>

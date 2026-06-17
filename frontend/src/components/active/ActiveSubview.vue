@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoomStore } from '@/stores/room'
 import TurnButton from './TurnButton.vue'
@@ -11,6 +11,11 @@ import Avatar from '@/components/ui/Avatar.vue'
 const { t } = useI18n()
 const store = useRoomStore()
 const currentName = computed(() => store.currentPlayer?.name ?? '')
+
+// "Wait my turn" declines the claim prompt: a purely local dismissal that drops
+// the next-up player to the passive watch view. Each new turn re-offers it.
+const claimDismissed = ref(false)
+watch(() => store.room?.current_player_id, () => { claimDismissed.value = false })
 </script>
 
 <template>
@@ -26,13 +31,13 @@ const currentName = computed(() => store.currentPlayer?.name ?? '')
     </div>
 
     <!-- 07 CLAIM -->
-    <div v-else-if="store.amINext" class="claim">
+    <div v-else-if="store.amINext && !claimDismissed" class="claim">
       <div class="pill">{{ t('active.youreUpNext') }}</div>
       <h1>{{ t('active.finishingTurn', { name: currentName }) }}</h1>
       <p>{{ t('active.claimHint') }}</p>
       <div class="spacer" />
       <AppButton @click="store.claimTurn()">{{ t('active.claim') }}</AppButton>
-      <AppButton variant="ghost">{{ t('active.wait') }}</AppButton>
+      <AppButton variant="ghost" @click="claimDismissed = true">{{ t('active.wait') }}</AppButton>
     </div>
 
     <!-- 06 NOT YOUR TURN -->

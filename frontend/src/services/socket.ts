@@ -1,6 +1,6 @@
 import type { ClientMessage, ServerMessage } from '@/types/wire'
 
-export type ConnStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
+export type ConnStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed' | 'gone'
 type Loc = Pick<Location, 'protocol' | 'host'>
 type WSFactory = (url: string) => WebSocket
 type OnMessage = (msg: ServerMessage) => void
@@ -8,6 +8,13 @@ type OnStatus = (status: ConnStatus) => void
 
 const BACKOFF_BASE = 500
 const BACKOFF_MAX = 8000
+/**
+ * Stop retrying after this many consecutive failed reconnects (~23s of backoff).
+ * A server restart 404s the WS handshake, so no `not_found` frame ever arrives;
+ * without a cap the client would "Reconnecting…" forever. On exhaustion we emit
+ * the terminal `gone` status so the store can run its room-gone recovery.
+ */
+const MAX_RECONNECT_ATTEMPTS = 6
 
 export class RoomSocket {
   private ws: WebSocket | null = null
@@ -80,6 +87,13 @@ export class RoomSocket {
 
   private scheduleReconnect() {
     this.attempts += 1
+    if (this.attempts > MAX_RECONNECT_ATTEMPTS) {
+      // The room is unreachable (e.g. the server restarted and it no longer
+      // exists). Stop retrying and report it as gone; the store routes home.
+      this.closedByUs = true
+      this.onStatus('gone')
+      return
+    }
     const delay = Math.min(BACKOFF_MAX, BACKOFF_BASE * 2 ** (this.attempts - 1))
     this.timer = setTimeout(() => this.open(), delay)
   }

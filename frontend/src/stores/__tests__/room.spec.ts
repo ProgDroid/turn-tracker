@@ -104,6 +104,17 @@ describe('room store', () => {
     expect(s.roomGone).toBe(true)
   })
 
+  it("socket reporting 'gone' marks the room as gone (server-restart recovery)", () => {
+    const sock = fakeSocket()
+    const s = useRoomStore()
+    s._setSocket(sock as any)
+    // Grab the status callback the store registered, then simulate the socket
+    // giving up after exhausting reconnects against a room that no longer exists.
+    const onStatus = sock.onStatusChange.mock.calls[0][0] as (st: string) => void
+    onStatus('gone')
+    expect(s.roomGone).toBe(true)
+  })
+
   it('actions send the right client messages', () => {
     const sock = fakeSocket()
     const s = useRoomStore()

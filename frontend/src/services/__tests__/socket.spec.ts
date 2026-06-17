@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { RoomSocket } from '@/services/socket'
+import { describe, it, expect, vi } from 'vitest'
+import { RoomSocket, type ConnStatus } from '@/services/socket'
 import type { ServerMessage } from '@/types/wire'
 
 class FakeWS {
@@ -99,5 +99,33 @@ describe('RoomSocket', () => {
     created[0].close() // old socket closes late; its handlers were detached -> no reconnect
     expect(created.length).toBe(count) // no spurious third socket
     expect(created[1].url).toContain('/ws/B')
+  })
+
+  it('gives up after a bounded number of failed reconnects and reports the room gone', () => {
+    vi.useFakeTimers()
+    try {
+      const { created, factory } = make()
+      const statuses: ConnStatus[] = []
+      const s = new RoomSocket(factory, { protocol: 'https:', host: 'h' })
+      s.onStatusChange((st) => statuses.push(st))
+      s.connect('DEAD42', () => {})
+
+      // Simulate a server-restarted room: every handshake fails. Each failed
+      // socket closes and schedules a retry; advancing timers spawns the next.
+      // A correct implementation stops creating sockets once the cap is hit.
+      let guard = 0
+      let lastSeen = 0
+      while (created.length > lastSeen && guard < 100) {
+        lastSeen = created.length
+        created[created.length - 1].close() // connection failed
+        vi.runOnlyPendingTimers() // fire backoff -> open() spawns next ws (or not)
+        guard += 1
+      }
+
+      expect(statuses).toContain('gone') // terminal: drives store room-gone recovery
+      expect(created.length).toBeLessThan(20) // bounded, not infinite
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -38,4 +38,13 @@ describe('ActiveSubview', () => {
     const w = setup('p1', 'p2') // p1 is 2 away
     expect(w.text()).toContain("Alice's turn")
   })
+  it('clicking "Wait my turn" dismisses the claim prompt and shows the watching view', async () => {
+    const w = setup('p3', 'p2') // p3 is next -> claim screen
+    expect(w.text()).toContain('Claim my turn')
+    const waitBtn = w.findAll('button').find((b) => b.text() === 'Wait my turn')
+    expect(waitBtn).toBeTruthy()
+    await waitBtn!.trigger('click')
+    expect(w.text()).not.toContain('Claim my turn')
+    expect(w.text()).toContain("Alice's turn") // fell through to the passive watch view
+  })
 })

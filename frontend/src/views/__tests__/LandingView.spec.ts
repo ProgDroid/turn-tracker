@@ -3,6 +3,8 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import LandingView from '@/views/LandingView.vue'
+import CodeInput from '@/components/ui/CodeInput.vue'
+import AppButton from '@/components/ui/AppButton.vue'
 import { i18n } from '@/i18n'
 
 const routes = [
@@ -34,5 +36,28 @@ describe('LandingView', () => {
     await flushPromises()
     expect(localStorage.getItem('tt:token:GR7K9P')).toBe('tok')
     expect(router.currentRoute.value.fullPath).toContain('/room/GR7K9P')
+  })
+
+  it('shows an error and does not navigate when room creation fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }))
+    const { wrapper, router } = mountView()
+    await router.isReady()
+    await wrapper.get('[data-test=name]').setValue('Sam')
+    await wrapper.get('[data-test=create]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.err').exists()).toBe(true)
+    expect(router.currentRoute.value.fullPath).toBe('/')
+  })
+
+  it('joins an existing room, navigating with the name as a query param', async () => {
+    const { wrapper, router } = mountView()
+    await router.isReady()
+    await wrapper.get('.link').trigger('click') // switch to join mode
+    wrapper.findComponent(CodeInput).vm.$emit('update:modelValue', 'GR7K9P')
+    await wrapper.get('[data-test=name]').setValue('Sam')
+    await wrapper.findComponent(AppButton).trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/room/GR7K9P')
+    expect(router.currentRoute.value.query.name).toBe('Sam')
   })
 })
