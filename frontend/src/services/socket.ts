@@ -97,6 +97,7 @@ export class RoomSocket {
   close() {
     this.closedByUs = true
     if (this.timer) clearTimeout(this.timer)
+    this.sendQueue = []
     this.ws?.close()
   }
 }

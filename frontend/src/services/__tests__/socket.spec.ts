@@ -14,7 +14,7 @@ class FakeWS {
   constructor(public url: string) {}
   send(d: string) { this.sent.push(d) }
   close() { this.readyState = 3; this.onclose?.() }
-  emitOpen() { this.onopen?.() }
+  emitOpen() { this.readyState = 1; this.onopen?.() }
   emitMessage(m: ServerMessage) { this.onmessage?.({ data: JSON.stringify(m) }) }
 }
 
@@ -60,6 +60,33 @@ describe('RoomSocket', () => {
     created[0].emitOpen()
     s.send({ type: 'end_turn' })
     expect(created[0].sent).toEqual(['{"type":"end_turn"}'])
+  })
+
+  it('send() buffers messages while CONNECTING and flushes them in order on open', () => {
+    const { created, factory } = make()
+    const s = new RoomSocket(factory, { protocol: 'https:', host: 'h' })
+    s.connect('C', () => {})
+    // Force CONNECTING state so send() queues instead of sending immediately.
+    created[0].readyState = 0
+    s.send({ type: 'end_turn' })
+    // Nothing sent yet — it was buffered.
+    expect(created[0].sent).toEqual([])
+    // Opening the socket flushes the queue.
+    created[0].emitOpen()
+    expect(created[0].sent).toEqual(['{"type":"end_turn"}'])
+  })
+
+  it('send() flushes multiple queued messages in order on open', () => {
+    const { created, factory } = make()
+    const s = new RoomSocket(factory, { protocol: 'https:', host: 'h' })
+    s.connect('C', () => {})
+    created[0].readyState = 0
+    s.send({ type: 'end_turn' })
+    s.send({ type: 'start_game' })
+    // Both buffered — nothing sent yet.
+    expect(created[0].sent).toEqual([])
+    created[0].emitOpen()
+    expect(created[0].sent).toEqual(['{"type":"end_turn"}', '{"type":"start_game"}'])
   })
 
   it('reconnecting to a different room tears down the old socket without spawning extras', () => {
