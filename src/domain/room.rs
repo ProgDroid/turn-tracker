@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 /// Minimum interval between nudges from the same sender.
 pub const NUDGE_COOLDOWN: Duration = Duration::from_secs(10);
 
+/// Maximum number of players allowed in a single room.
+pub const MAX_PLAYERS: usize = 16;
+
 use crate::domain::ids::{PlayerId, RoomCode, generate_token};
 use crate::domain::player::Player;
 
@@ -23,6 +26,7 @@ pub enum TurnError {
     WrongState,
     NotYourTurn,
     NudgeOnCooldown,
+    RoomFull,
 }
 
 pub struct Room {
@@ -66,6 +70,12 @@ impl Room {
             .push(Player::new(id.clone(), name, token.clone(), false));
         self.last_active = now;
         (id, token)
+    }
+
+    /// True once the room holds [`MAX_PLAYERS`] players (no more may join).
+    #[must_use]
+    pub const fn is_full(&self) -> bool {
+        self.players.len() >= MAX_PLAYERS
     }
 
     /// Find a player by their secret token.
@@ -372,6 +382,23 @@ mod tests {
         assert!(room.players[0].is_host);
         assert_eq!(room.players[0].id, host_id);
         assert!(room.current_player_id.is_none());
+    }
+
+    #[test]
+    fn test_is_full_at_max_players() {
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        // Host counts as player #1; add up to MAX_PLAYERS.
+        while room.players.len() < MAX_PLAYERS {
+            room.add_player("P".into(), t0());
+        }
+        assert!(room.is_full());
+        assert_eq!(room.players.len(), MAX_PLAYERS);
+    }
+
+    #[test]
+    fn test_not_full_below_max_players() {
+        let (room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        assert!(!room.is_full());
     }
 
     #[test]

@@ -25,6 +25,20 @@ async fn spawn_server() -> String {
 }
 
 #[actix_web::test]
+async fn test_health_endpoint_returns_ok() {
+    let addr = spawn_server().await;
+    let client = awc::Client::new();
+    let mut resp = client
+        .get(format!("http://{addr}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+}
+
+#[actix_web::test]
 async fn test_create_then_join_and_start_flow() {
     let addr = spawn_server().await;
 

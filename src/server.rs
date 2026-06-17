@@ -8,8 +8,15 @@ use actix_web::dev::{ServiceRequest, ServiceResponse, fn_service};
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use serde::Deserialize;
 
+use crate::domain::player::{self, NameError};
 use crate::error::AppError;
 use crate::registry::Registry;
+
+/// GET /health — liveness probe. Always returns 200 with `{"status":"ok"}`.
+#[allow(clippy::unused_async)] // required by actix-web handler signature
+pub async fn health() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+}
 
 #[derive(Deserialize)]
 pub struct CreateRoomRequest {
@@ -19,18 +26,20 @@ pub struct CreateRoomRequest {
 /// POST /api/rooms — create a room, returning the code + host credentials.
 ///
 /// # Errors
-/// `AppError::InvalidRequest` for an empty host name; `AppError::CodeExhausted`
-/// if no unique code is available.
+/// `AppError::InvalidRequest` for an empty host name; `AppError::NameTooLong`
+/// if the name exceeds the length bound; `AppError::CodeExhausted` if no unique
+/// code is available; `AppError::RoomCapacityReached` if the server is full.
 #[allow(clippy::unused_async)] // required by actix-web handler signature
 pub async fn create_room(
     registry: web::Data<Arc<Registry>>,
     body: web::Json<CreateRoomRequest>,
 ) -> Result<impl Responder, AppError> {
-    let name = body.host_name.trim();
-    if name.is_empty() {
-        return Err(AppError::InvalidRequest);
-    }
-    let (code, host_id, token) = registry.create_room(name.to_owned(), Instant::now())?;
+    let name = match player::validate_name(&body.host_name) {
+        Ok(name) => name,
+        Err(NameError::Empty) => return Err(AppError::InvalidRequest),
+        Err(NameError::TooLong) => return Err(AppError::NameTooLong),
+    };
+    let (code, host_id, token) = registry.create_room(name, Instant::now())?;
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "room_code": code.0,
         "player_id": host_id.0,
@@ -41,6 +50,7 @@ pub async fn create_room(
 /// Build the Actix `App`. Registry is injected as shared state.
 pub fn config(cfg: &mut web::ServiceConfig, registry: Arc<Registry>) {
     cfg.app_data(web::Data::new(registry))
+        .route("/health", web::get().to(health))
         .route("/api/rooms", web::post().to(create_room))
         .route("/ws/{code}", web::get().to(crate::ws::connection::ws_route));
 }
@@ -98,6 +108,55 @@ mod tests {
         let mut f = std::fs::File::create(dir.join("index.html")).unwrap();
         f.write_all(b"<!doctype html><title>SPA</title>").unwrap();
         dir
+    }
+
+    fn test_app_config() -> impl Fn(&mut web::ServiceConfig) + Clone + Send + 'static {
+        move |cfg: &mut web::ServiceConfig| config(cfg, Arc::new(Registry::new()))
+    }
+
+    #[actix_web::test]
+    async fn health_returns_ok_status_json() {
+        let app = test::init_service(App::new().configure(test_app_config())).await;
+        let req = test::TestRequest::get().uri("/health").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body = test::read_body(resp).await;
+        assert_eq!(&body[..], br#"{"status":"ok"}"#);
+    }
+
+    #[actix_web::test]
+    async fn create_room_accepts_name_at_max_len() {
+        let app = test::init_service(App::new().configure(test_app_config())).await;
+        let name = "a".repeat(crate::domain::player::MAX_NAME_LEN);
+        let req = test::TestRequest::post()
+            .uri("/api/rooms")
+            .set_json(serde_json::json!({ "host_name": name }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200, "40-char name should be accepted");
+    }
+
+    #[actix_web::test]
+    async fn create_room_rejects_name_one_over_max_len() {
+        let app = test::init_service(App::new().configure(test_app_config())).await;
+        let name = "a".repeat(crate::domain::player::MAX_NAME_LEN + 1);
+        let req = test::TestRequest::post()
+            .uri("/api/rooms")
+            .set_json(serde_json::json!({ "host_name": name }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400, "41-char name should be rejected");
+    }
+
+    #[actix_web::test]
+    async fn create_room_rejects_empty_name() {
+        let app = test::init_service(App::new().configure(test_app_config())).await;
+        let req = test::TestRequest::post()
+            .uri("/api/rooms")
+            .set_json(serde_json::json!({ "host_name": "   " }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
     }
 
     #[actix_web::test]

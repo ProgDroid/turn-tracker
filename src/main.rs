@@ -9,6 +9,11 @@ async fn main() -> std::io::Result<()> {
     cleanup::spawn(registry.clone());
     let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into());
+    if turn_tracker::ws::origin::allowed_origins_from_env().is_empty() {
+        log::warn!(
+            "ALLOWED_ORIGINS is unset/empty: WebSocket Origin checking is DISABLED (all origins allowed)"
+        );
+    }
     log::info!("turn-tracker listening on {bind}");
     server::run(registry, &bind, static_dir).await
 }

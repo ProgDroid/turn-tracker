@@ -22,6 +22,9 @@ pub enum Outbound {
 const BROADCAST_CAPACITY: usize = 64;
 const MAX_CODE_ATTEMPTS: usize = 10;
 
+/// Maximum number of concurrently live rooms the server will hold.
+pub const MAX_ROOMS: usize = 10_000;
+
 /// One room plus the channel used to push messages to its connections.
 pub struct RoomHandle {
     pub room: Room,
@@ -44,13 +47,18 @@ impl Registry {
     /// Create a room with a unique code. Returns `(code, host_id, host_token)`.
     ///
     /// # Errors
-    /// `AppError::CodeExhausted` if a unique code can't be found in
+    /// `AppError::RoomCapacityReached` if the server already holds [`MAX_ROOMS`]
+    /// rooms; `AppError::CodeExhausted` if a unique code can't be found in
     /// `MAX_CODE_ATTEMPTS` tries.
     pub fn create_room(
         &self,
         host_name: String,
         now: Instant,
     ) -> Result<(RoomCode, PlayerId, String), AppError> {
+        if self.rooms.len() >= MAX_ROOMS {
+            log::warn!("room create rejected: server at capacity ({MAX_ROOMS} rooms)");
+            return Err(AppError::RoomCapacityReached);
+        }
         for _ in 0..MAX_CODE_ATTEMPTS {
             let code = RoomCode::generate();
             if self.rooms.contains_key(&code.0) {
@@ -59,6 +67,8 @@ impl Registry {
             let (room, host_id, token) = Room::create(code.clone(), host_name, now);
             let (tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
             self.rooms.insert(code.0.clone(), RoomHandle { room, tx });
+            // CODE only — never the host token.
+            log::info!("room created: code={}", code.0);
             return Ok((code, host_id, token));
         }
         Err(AppError::CodeExhausted)
@@ -125,6 +135,20 @@ mod tests {
         let reg = Registry::new();
         let (code, _host, _tok) = reg.create_room("Host".into(), Instant::now()).unwrap();
         assert!(reg.contains(&code.0));
+    }
+
+    #[test]
+    fn test_create_room_rejects_when_at_capacity() {
+        let reg = Registry::new();
+        let now = Instant::now();
+        for _ in 0..MAX_ROOMS {
+            reg.create_room("Host".into(), now).unwrap();
+        }
+        assert_eq!(reg.rooms.len(), MAX_ROOMS);
+        match reg.create_room("Host".into(), now) {
+            Err(AppError::RoomCapacityReached) => {}
+            other => panic!("expected RoomCapacityReached, got {other:?}"),
+        }
     }
 
     #[test]

@@ -8,9 +8,11 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::StreamExt as _;
 
 use crate::domain::ids::PlayerId;
+use crate::domain::player::{self, NameError};
 use crate::registry::{Outbound, Registry};
 use crate::wire::{ClientMessage, PublicRoom, ServerMessage};
 use crate::ws::dispatch::dispatch;
+use crate::ws::origin::{allowed_origins_from_env, origin_allowed};
 
 /// GET /ws/{code} — upgrade to a WebSocket bound to that room.
 ///
@@ -24,6 +26,20 @@ pub async fn ws_route(
     registry: web::Data<Arc<Registry>>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let code = path.into_inner();
+
+    // Origin allowlist (dev-safe: empty list allows all).
+    let allowed = allowed_origins_from_env();
+    let origin = req
+        .headers()
+        .get(actix_web::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok());
+    if !origin_allowed(origin, &allowed) {
+        log::warn!("ws upgrade rejected: origin not allowed (room={code})");
+        return Ok(
+            HttpResponse::Forbidden().json(serde_json::json!({ "error": "Origin not allowed" }))
+        );
+    }
+
     if !registry.contains(&code) {
         return Ok(HttpResponse::NotFound().json(serde_json::json!({ "error": "Room not found" })));
     }
@@ -34,6 +50,7 @@ pub async fn ws_route(
         let Ok(mut rx) = registry.subscribe(&code) else {
             return;
         };
+        log::info!("ws connected: room={code}");
         let mut session = session;
         let mut me: Option<PlayerId> = None;
 
@@ -75,6 +92,7 @@ pub async fn ws_route(
         }
 
         if let Some(id) = me {
+            log::info!("ws disconnected: room={code} player={}", id.0);
             let _ = registry.with_room_mut(&code, |room| {
                 if let Some(p) = room.players.iter_mut().find(|p| p.id == id) {
                     p.connected = false;
@@ -103,6 +121,7 @@ async fn handle_text(
     text: &str,
 ) -> Result<(), ()> {
     let Ok(msg) = serde_json::from_str::<ClientMessage>(text) else {
+        log::warn!("ws bad_message: room={code} (unparseable frame)");
         let _ = forward(
             session,
             &ServerMessage::Error {
@@ -159,6 +178,30 @@ async fn handle_join(
     player_token: Option<String>,
     player_name: Option<String>,
 ) -> Result<(), ()> {
+    // Validate a fresh player's name up front (rejoin-by-token reuses the
+    // stored name, so it bypasses this). Absent/blank names keep the legacy
+    // "Player" default; an over-long name is rejected.
+    let is_rejoin = player_token.as_deref().is_some_and(|tok| !tok.is_empty());
+    let new_name: Result<String, NameError> = if is_rejoin {
+        Ok(String::new()) // unused for rejoins
+    } else {
+        match player_name.as_deref() {
+            Some(raw) if !raw.trim().is_empty() => player::validate_name(raw),
+            _ => Ok("Player".into()),
+        }
+    };
+    let Ok(new_name) = new_name else {
+        let _ = forward(
+            session,
+            &ServerMessage::Error {
+                code: "bad_name".into(),
+                message: "Name must be between 1 and 40 characters".into(),
+            },
+        )
+        .await;
+        return Ok(());
+    };
+
     let now = Instant::now();
     let resolved = registry.with_room_mut(code, |room| {
         // Re-attach by token if provided, otherwise None → new player.
@@ -167,44 +210,67 @@ async fn handle_join(
                 .map(|p| (p.id.clone(), p.token.clone()))
         });
 
-        let (id, fresh_token) = if let Some((id, token)) = existing {
+        let outcome: JoinOutcome = if let Some((id, token)) = existing {
             if let Some(p) = room.players.iter_mut().find(|p| p.id == id) {
                 p.connected = true;
             }
             // Always send Welcome on (re-)join so the client can set `me`.
-            (id, Some(token))
+            JoinOutcome::Joined(id, token, true)
+        } else if room.is_full() {
+            JoinOutcome::RoomFull
         } else {
-            let name = player_name
-                .map(|n| n.trim().to_owned())
-                .filter(|n| !n.is_empty())
-                .unwrap_or_else(|| "Player".into());
-            let (id, token) = room.add_player(name, now);
-            (id, Some(token))
+            let (id, token) = room.add_player(new_name, now);
+            JoinOutcome::Joined(id, token, false)
         };
 
-        let broadcast = vec![Outbound::All(ServerMessage::RoomState {
-            room: PublicRoom::from(&*room),
-        })];
-        ((id, fresh_token), broadcast)
+        let broadcast = match &outcome {
+            JoinOutcome::Joined(..) => vec![Outbound::All(ServerMessage::RoomState {
+                room: PublicRoom::from(&*room),
+            })],
+            JoinOutcome::RoomFull => Vec::new(),
+        };
+        (outcome, broadcast)
     });
 
     match resolved {
-        Ok((id, fresh_token)) => {
-            *me = Some(id.clone());
-            if let Some(token) = fresh_token {
-                let _ = forward(
-                    session,
-                    &ServerMessage::Welcome {
-                        player_id: id,
-                        token,
-                    },
-                )
-                .await;
+        Ok(JoinOutcome::Joined(id, token, rejoined)) => {
+            if rejoined {
+                log::debug!("ws rejoin-by-token: room={code} player={}", id.0);
+            } else {
+                log::info!("ws join: room={code} player={}", id.0);
             }
+            *me = Some(id.clone());
+            let _ = forward(
+                session,
+                &ServerMessage::Welcome {
+                    player_id: id,
+                    token,
+                },
+            )
+            .await;
+            Ok(())
+        }
+        Ok(JoinOutcome::RoomFull) => {
+            log::info!("ws join rejected: room={code} is full");
+            let _ = forward(
+                session,
+                &ServerMessage::Error {
+                    code: "room_full".into(),
+                    message: "Room is full".into(),
+                },
+            )
+            .await;
             Ok(())
         }
         Err(_) => Err(()),
     }
+}
+
+/// Result of resolving a join inside the room lock.
+enum JoinOutcome {
+    /// `(player_id, token, was_rejoin)`
+    Joined(PlayerId, String, bool),
+    RoomFull,
 }
 
 #[allow(clippy::result_unit_err)] // unit error is an intentional "just terminate" signal

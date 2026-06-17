@@ -57,6 +57,7 @@ fn error_message(e: &TurnError) -> ServerMessage {
         TurnError::WrongState => ("wrong_state", "Action not valid in the current state"),
         TurnError::NotYourTurn => ("not_your_turn", "It is not your turn to claim"),
         TurnError::NudgeOnCooldown => ("nudge_cooldown", "Nudge is on cooldown"),
+        TurnError::RoomFull => ("room_full", "Room is full"),
     };
     ServerMessage::Error {
         code: code.into(),

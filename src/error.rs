@@ -6,10 +6,14 @@ use actix_web::{HttpResponse, ResponseError, http::StatusCode};
 pub enum AppError {
     #[error("Invalid request")]
     InvalidRequest,
+    #[error("Name must be between 1 and 40 characters")]
+    NameTooLong,
     #[error("Room not found")]
     RoomNotFound,
     #[error("Could not allocate a unique room code")]
     CodeExhausted,
+    #[error("Server is at capacity; try again later")]
+    RoomCapacityReached,
 }
 
 impl ResponseError for AppError {
@@ -20,9 +24,9 @@ impl ResponseError for AppError {
 
     fn status_code(&self) -> StatusCode {
         match self {
-            Self::InvalidRequest => StatusCode::BAD_REQUEST,
+            Self::InvalidRequest | Self::NameTooLong => StatusCode::BAD_REQUEST,
             Self::RoomNotFound => StatusCode::NOT_FOUND,
-            Self::CodeExhausted => StatusCode::SERVICE_UNAVAILABLE,
+            Self::CodeExhausted | Self::RoomCapacityReached => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 }
