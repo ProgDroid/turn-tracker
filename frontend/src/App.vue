@@ -3,3 +3,7 @@
 <template>
   <RouterView />
 </template>
+
+<style>
+#app { min-height: 100%; }
+</style>
