@@ -79,7 +79,12 @@ impl Store for FileStore {
                     "snapshot parse failed ({e}); backing up to .corrupt and starting fresh"
                 );
                 let corrupt = with_suffix(&self.path, ".corrupt");
-                let _ = fs::rename(&self.path, &corrupt);
+                if let Err(e) = fs::rename(&self.path, &corrupt) {
+                    log::warn!(
+                        "could not back up corrupt snapshot to {}: {e}",
+                        corrupt.display()
+                    );
+                }
                 Ok(RegistrySnapshot::default())
             }
         }

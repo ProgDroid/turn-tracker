@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
+
 use crate::registry::Registry;
 
 use super::Store;
@@ -22,21 +24,30 @@ pub async fn snapshot_once(registry: &Registry, store: &Arc<dyn Store>) {
     }
 }
 
-/// Spawn the periodic snapshotter. Returns the task handle so the caller can
-/// abort it on shutdown before taking the final snapshot.
+/// Spawn the periodic snapshotter.
+///
+/// Returns the task handle and a `Notify` handle. Call `notify_one()` then
+/// `.await` the task to stop it gracefully — any in-flight save finishes
+/// before the task returns, so the caller's final save runs exclusively
+/// (no concurrent write to the same temp file).
 #[must_use]
 pub fn spawn_snapshotter(
     registry: Arc<Registry>,
     store: Arc<dyn Store>,
     interval: Duration,
-) -> actix_web::rt::task::JoinHandle<()> {
-    actix_web::rt::spawn(async move {
+) -> (actix_web::rt::task::JoinHandle<()>, Arc<Notify>) {
+    let shutdown = Arc::new(Notify::new());
+    let signal = shutdown.clone();
+    let handle = actix_web::rt::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         loop {
-            ticker.tick().await;
-            snapshot_once(&registry, &store).await;
+            tokio::select! {
+                _ = ticker.tick() => snapshot_once(&registry, &store).await,
+                () = signal.notified() => break,
+            }
         }
-    })
+    });
+    (handle, shutdown)
 }
 
 #[cfg(test)]
@@ -88,5 +99,19 @@ mod tests {
         // Flag cleared → no further save.
         snapshot_once(&registry, &store).await;
         assert_eq!(mock.saves.lock().unwrap().len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn spawn_snapshotter_stops_on_shutdown_signal() {
+        let registry = Arc::new(Registry::new());
+        let store: Arc<dyn Store> = Arc::new(MockStore {
+            saves: Mutex::new(vec![]),
+        });
+        let (handle, shutdown) = spawn_snapshotter(registry, store, Duration::from_hours(1));
+        shutdown.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("snapshotter did not stop after shutdown signal")
+            .expect("snapshotter task panicked");
     }
 }

@@ -25,7 +25,7 @@ async fn main() -> std::io::Result<()> {
     log::info!("restored {restored_rooms} room(s) from snapshot");
 
     cleanup::spawn(registry.clone());
-    let snapshotter = writer::spawn_snapshotter(
+    let (snapshotter, shutdown) = writer::spawn_snapshotter(
         registry.clone(),
         store.clone(),
         Duration::from_secs(interval_secs),
@@ -43,9 +43,10 @@ async fn main() -> std::io::Result<()> {
     // Runs until SIGTERM/SIGINT; Actix drains connections before returning.
     let result = server::run(registry.clone(), &bind, static_dir).await;
 
-    // Graceful shutdown: stop the periodic writer, then take a final snapshot
-    // so a planned restart loses nothing.
-    snapshotter.abort();
+    // Graceful shutdown: stop the periodic writer and wait for any in-flight save
+    // to finish, THEN take the final snapshot exclusively (no concurrent write).
+    shutdown.notify_one();
+    let _ = snapshotter.await;
     if let Err(e) = store.save(&registry.snapshot()) {
         log::error!("final snapshot save failed: {e}");
     } else {
