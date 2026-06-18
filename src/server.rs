@@ -4,13 +4,18 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use actix_files::{Files, NamedFile};
+use actix_governor::Governor;
 use actix_web::dev::{ServiceRequest, ServiceResponse, fn_service};
+use actix_web::middleware::DefaultHeaders;
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use serde::Deserialize;
 
 use crate::domain::player::{self, NameError};
 use crate::error::AppError;
+use crate::ratelimit::{self, RealIpKeyExtractor};
 use crate::registry::Registry;
+use actix_governor::GovernorConfig;
+use actix_governor::governor::middleware::NoOpMiddleware;
 
 /// GET /health — liveness probe. Always returns 200 with `{"status":"ok"}`.
 #[allow(clippy::unused_async)] // required by actix-web handler signature
@@ -47,11 +52,23 @@ pub async fn create_room(
     })))
 }
 
-/// Build the Actix `App`. Registry is injected as shared state.
-pub fn config(cfg: &mut web::ServiceConfig, registry: Arc<Registry>) {
+/// Build the Actix `App`.
+///
+/// Registry is injected as shared state. `governor` is the shared per-client
+/// rate-limit config applied to room creation; pass the SAME config into every
+/// worker so they share one set of buckets.
+pub fn config(
+    cfg: &mut web::ServiceConfig,
+    registry: Arc<Registry>,
+    governor: &GovernorConfig<RealIpKeyExtractor, NoOpMiddleware>,
+) {
     cfg.app_data(web::Data::new(registry))
         .route("/health", web::get().to(health))
-        .route("/api/rooms", web::post().to(create_room))
+        .service(
+            web::resource("/api/rooms")
+                .wrap(Governor::new(governor))
+                .route(web::post().to(create_room)),
+        )
         .route("/ws/{code}", web::get().to(crate::ws::connection::ws_route));
 }
 
@@ -79,16 +96,38 @@ pub fn spa_files(static_dir: &str) -> Files {
         }))
 }
 
+/// Content-Security-Policy for the self-contained SPA. The Vite build emits only
+/// external (same-origin) scripts/styles, so `script-src 'self'` is safe; Vue
+/// injects dynamic inline styles at runtime, so `style-src` allows `unsafe-inline`.
+/// `connect-src 'self'` covers the same-origin WebSocket.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; \
+     font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+
+/// Baseline security response headers applied to every response.
+#[must_use]
+pub fn security_headers() -> DefaultHeaders {
+    DefaultHeaders::new()
+        .add(("X-Content-Type-Options", "nosniff"))
+        .add(("X-Frame-Options", "DENY"))
+        .add(("Referrer-Policy", "no-referrer"))
+        .add(("Content-Security-Policy", CONTENT_SECURITY_POLICY))
+}
+
 /// Run the HTTP server, serving the SPA build from `static_dir`.
 ///
 /// # Errors
 /// Propagates bind/IO errors from Actix.
 #[allow(clippy::future_not_send)] // actix-web App uses Rc internally; HttpServer runs each worker on its own thread
 pub async fn run(registry: Arc<Registry>, bind: &str, static_dir: String) -> std::io::Result<()> {
+    // Build the rate-limit config ONCE so every worker shares the same buckets.
+    let governor = ratelimit::room_create_config();
     HttpServer::new(move || {
         let registry = registry.clone();
+        let governor = governor.clone();
         App::new()
-            .configure(|cfg| config(cfg, registry.clone()))
+            .wrap(security_headers())
+            .configure(|cfg| config(cfg, registry.clone(), &governor))
             .service(spa_files(&static_dir))
     })
     .bind(bind)?
@@ -111,7 +150,13 @@ mod tests {
     }
 
     fn test_app_config() -> impl Fn(&mut web::ServiceConfig) + Clone + Send + 'static {
-        move |cfg: &mut web::ServiceConfig| config(cfg, Arc::new(Registry::new()))
+        move |cfg: &mut web::ServiceConfig| {
+            config(
+                cfg,
+                Arc::new(Registry::new()),
+                &ratelimit::room_create_config(),
+            );
+        }
     }
 
     #[actix_web::test]
@@ -157,6 +202,50 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 400);
+    }
+
+    #[actix_web::test]
+    async fn responses_carry_security_headers() {
+        let app = test::init_service(
+            App::new()
+                .wrap(security_headers())
+                .configure(test_app_config()),
+        )
+        .await;
+        let req = test::TestRequest::get().uri("/health").to_request();
+        let resp = test::call_service(&app, req).await;
+        let headers = resp.headers();
+        assert_eq!(headers.get("X-Content-Type-Options").unwrap(), "nosniff");
+        assert_eq!(headers.get("X-Frame-Options").unwrap(), "DENY");
+        assert!(
+            headers.get("Content-Security-Policy").is_some(),
+            "CSP header must be present"
+        );
+    }
+
+    #[actix_web::test]
+    async fn create_room_is_rate_limited_after_burst() {
+        // One app, one shared limiter; all requests share the "unknown" bucket
+        // (TestRequest has no peer/XFF). Burst is ROOM_CREATE_BURST (10).
+        let app = test::init_service(App::new().configure(test_app_config())).await;
+        let make = || {
+            test::TestRequest::post()
+                .uri("/api/rooms")
+                .set_json(serde_json::json!({ "host_name": "Host" }))
+                .to_request()
+        };
+        // Burst requests succeed.
+        for i in 0..10 {
+            let resp = test::call_service(&app, make()).await;
+            assert_eq!(resp.status(), 200, "request {i} within burst should pass");
+        }
+        // The next one is throttled (429).
+        let resp = test::call_service(&app, make()).await;
+        assert_eq!(
+            resp.status(),
+            429,
+            "request past the burst should be rate-limited"
+        );
     }
 
     #[actix_web::test]

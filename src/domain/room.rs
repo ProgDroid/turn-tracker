@@ -27,6 +27,7 @@ pub enum TurnError {
     NotYourTurn,
     NudgeOnCooldown,
     RoomFull,
+    RoomLocked,
 }
 
 pub struct Room {
@@ -34,6 +35,9 @@ pub struct Room {
     pub created_at: Instant,
     pub last_active: Instant,
     pub state: RoomState,
+    /// When true, only existing players (rejoin-by-token) may connect; brand-new
+    /// players are turned away. Host-toggled; survives restarts.
+    pub locked: bool,
     /// Order is significant: this Vec IS the turn order.
     pub players: Vec<Player>,
     pub current_player_id: Option<PlayerId>,
@@ -54,6 +58,7 @@ impl Room {
             created_at: now,
             last_active: now,
             state: RoomState::Lobby,
+            locked: false,
             players: vec![host],
             current_player_id: None,
             previous_player_id: None,
@@ -329,6 +334,26 @@ impl Room {
             }
         }
         self.players = reordered;
+        self.last_active = now;
+        Ok(())
+    }
+
+    /// Host toggles whether brand-new players may join. Allowed in any state.
+    /// Does NOT affect reconnection by token — a dropped player can always
+    /// return. Idempotent: setting the current value is a successful no-op.
+    ///
+    /// # Errors
+    /// `NotAuthorized` if `actor` is not the host.
+    pub fn set_locked(
+        &mut self,
+        actor: &PlayerId,
+        locked: bool,
+        now: Instant,
+    ) -> Result<(), TurnError> {
+        if !self.is_host(actor) {
+            return Err(TurnError::NotAuthorized);
+        }
+        self.locked = locked;
         self.last_active = now;
         Ok(())
     }
@@ -634,6 +659,29 @@ mod tests {
             room.set_order(&host_id, std::slice::from_ref(&host_id), t0()),
             Err(TurnError::NotFound)
         );
+    }
+
+    // --- set_locked ---
+
+    #[test]
+    fn test_set_locked_by_host_toggles_flag() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        assert!(!room.locked, "rooms start unlocked");
+        room.set_locked(&host_id, true, t0()).unwrap();
+        assert!(room.locked);
+        room.set_locked(&host_id, false, t0()).unwrap();
+        assert!(!room.locked);
+    }
+
+    #[test]
+    fn test_set_locked_by_non_host_is_unauthorized() {
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        assert_eq!(
+            room.set_locked(&bob, true, t0()),
+            Err(TurnError::NotAuthorized)
+        );
+        assert!(!room.locked, "a rejected toggle must not change the flag");
     }
 
     // --- Task 12: nudge ---

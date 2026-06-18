@@ -36,6 +36,9 @@ pub struct PlayerSnapshot {
 pub struct RoomSnapshot {
     pub code: String,
     pub state: SnapshotState,
+    /// Defaulted so snapshots written before the lock feature still load.
+    #[serde(default)]
+    pub locked: bool,
     pub players: Vec<PlayerSnapshot>,
     pub current_player_id: Option<PlayerId>,
     pub previous_player_id: Option<PlayerId>,
@@ -55,6 +58,7 @@ impl From<&Room> for RoomSnapshot {
                 RoomState::Lobby => SnapshotState::Lobby,
                 RoomState::Active => SnapshotState::Active,
             },
+            locked: room.locked,
             players: room
                 .players
                 .iter()
@@ -86,6 +90,7 @@ impl RoomSnapshot {
                 SnapshotState::Lobby => RoomState::Lobby,
                 SnapshotState::Active => RoomState::Active,
             },
+            locked: self.locked,
             players: self
                 .players
                 .into_iter()
@@ -152,6 +157,30 @@ mod tests {
             rebuilt.last_nudge_at.is_empty(),
             "nudge cooldowns must clear"
         );
+    }
+
+    #[test]
+    fn locked_flag_survives_round_trip() {
+        let now = Instant::now();
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        room.set_locked(&host_id, true, now).unwrap();
+
+        let rebuilt = RoomSnapshot::from(&room).into_room();
+        assert!(rebuilt.locked, "locked flag must persist across reload");
+    }
+
+    #[test]
+    fn snapshot_without_locked_field_defaults_to_unlocked() {
+        // A snapshot written before the lock feature has no `locked` key.
+        let json = r#"{
+            "code": "ABC123",
+            "state": "lobby",
+            "players": [],
+            "current_player_id": null,
+            "previous_player_id": null
+        }"#;
+        let snap: RoomSnapshot = serde_json::from_str(json).unwrap();
+        assert!(!snap.locked, "missing locked must default to false");
     }
 
     #[test]

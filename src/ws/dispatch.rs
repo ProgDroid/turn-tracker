@@ -8,38 +8,71 @@ use crate::domain::room::{Room, TurnError};
 use crate::registry::Outbound;
 use crate::wire::{ClientMessage, PublicRoom, ServerMessage};
 
-/// Apply `msg` from `actor` to `room`, returning the messages to broadcast.
+/// Apply `msg` from `actor` to `room`, returning `(broadcasts, dirty)`.
+///
+/// `dirty` is true iff persisted state changed (so the registry should snapshot).
 /// `Join` is handled at the connection layer (it may create a player), so it is
-/// treated as a no-op refresh here.
+/// treated as a no-op refresh here. Nudges and any rejected action are NOT dirty:
+/// nudge cooldowns aren't persisted, and a rejected action mutated nothing.
 pub fn dispatch(
     room: &mut Room,
     actor: &PlayerId,
     msg: ClientMessage,
     now: Instant,
-) -> Vec<Outbound> {
-    let result: Result<Vec<Outbound>, TurnError> = match msg {
-        ClientMessage::StartGame => room.start_game(actor, now).map(|()| state_broadcast(room)),
-        ClientMessage::EndTurn => room.end_turn(actor, now).map(|()| state_broadcast(room)),
-        ClientMessage::ClaimTurn => room.claim_turn(actor, now).map(|()| state_broadcast(room)),
-        ClientMessage::UndoTurn => room.undo_turn(actor, now).map(|()| state_broadcast(room)),
-        ClientMessage::SkipPlayer { player_id } => room
-            .skip_player(actor, &player_id, now)
-            .map(|()| state_broadcast(room)),
-        ClientMessage::RemovePlayer { player_id } => room
-            .remove_player(actor, &player_id, now)
-            .map(|()| state_broadcast(room)),
-        ClientMessage::SetOrder { player_ids } => room
-            .set_order(actor, &player_ids, now)
-            .map(|()| state_broadcast(room)),
-        ClientMessage::Nudge => room
-            .nudge(actor, now)
-            .map(|target| vec![Outbound::Player(target, ServerMessage::Nudged)]),
-        ClientMessage::Join { .. } => Ok(state_broadcast(room)),
+) -> (Vec<Outbound>, bool) {
+    // `mutates` is the action's intent; it only counts when the result is Ok
+    // (a rejected action changed nothing). Nudge/Join refresh don't persist.
+    let (result, mutates): (Result<Vec<Outbound>, TurnError>, bool) = match msg {
+        ClientMessage::StartGame => (
+            room.start_game(actor, now).map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::EndTurn => (
+            room.end_turn(actor, now).map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::ClaimTurn => (
+            room.claim_turn(actor, now).map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::UndoTurn => (
+            room.undo_turn(actor, now).map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::SkipPlayer { player_id } => (
+            room.skip_player(actor, &player_id, now)
+                .map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::RemovePlayer { player_id } => (
+            room.remove_player(actor, &player_id, now)
+                .map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::SetOrder { player_ids } => (
+            room.set_order(actor, &player_ids, now)
+                .map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::SetLocked { locked } => (
+            room.set_locked(actor, locked, now)
+                .map(|()| state_broadcast(room)),
+            true,
+        ),
+        ClientMessage::Nudge => (
+            room.nudge(actor, now)
+                .map(|target| vec![Outbound::Player(target, ServerMessage::Nudged)]),
+            false,
+        ),
+        ClientMessage::Join { .. } => (Ok(state_broadcast(room)), false),
     };
 
     match result {
-        Ok(out) => out,
-        Err(e) => vec![Outbound::Player(actor.clone(), error_message(&e))],
+        Ok(out) => (out, mutates),
+        Err(e) => (
+            vec![Outbound::Player(actor.clone(), error_message(&e))],
+            false,
+        ),
     }
 }
 
@@ -58,6 +91,7 @@ fn error_message(e: &TurnError) -> ServerMessage {
         TurnError::NotYourTurn => ("not_your_turn", "It is not your turn to claim"),
         TurnError::NudgeOnCooldown => ("nudge_cooldown", "Nudge is on cooldown"),
         TurnError::RoomFull => ("room_full", "Room is full"),
+        TurnError::RoomLocked => ("room_locked", "Room is locked"),
     };
     ServerMessage::Error {
         code: code.into(),
@@ -81,17 +115,18 @@ mod tests {
     #[test]
     fn test_dispatch_end_turn_produces_room_state_broadcast() {
         let (mut room, host, _bob) = active_room();
-        let out = dispatch(&mut room, &host, ClientMessage::EndTurn, Instant::now());
+        let (out, dirty) = dispatch(&mut room, &host, ClientMessage::EndTurn, Instant::now());
         assert!(matches!(
             out.as_slice(),
             [Outbound::All(ServerMessage::RoomState { .. })]
         ));
+        assert!(dirty, "a successful turn advance must mark the room dirty");
     }
 
     #[test]
     fn test_dispatch_unauthorized_produces_targeted_error() {
         let (mut room, _host, bob) = active_room();
-        let out = dispatch(&mut room, &bob, ClientMessage::EndTurn, Instant::now());
+        let (out, dirty) = dispatch(&mut room, &bob, ClientMessage::EndTurn, Instant::now());
         match out.as_slice() {
             [Outbound::Player(target, ServerMessage::Error { code, .. })] => {
                 assert_eq!(target, &bob);
@@ -99,15 +134,57 @@ mod tests {
             }
             _ => panic!("expected targeted error, got {out:?}"),
         }
+        assert!(!dirty, "a rejected action must NOT mark the room dirty");
+    }
+
+    #[test]
+    fn test_dispatch_set_locked_by_host_broadcasts_and_is_dirty() {
+        let (mut room, host, _bob) = active_room();
+        let (out, dirty) = dispatch(
+            &mut room,
+            &host,
+            ClientMessage::SetLocked { locked: true },
+            Instant::now(),
+        );
+        assert!(matches!(
+            out.as_slice(),
+            [Outbound::All(ServerMessage::RoomState { .. })]
+        ));
+        assert!(dirty, "toggling the lock changes persisted state");
+        assert!(room.locked);
+    }
+
+    #[test]
+    fn test_dispatch_set_locked_by_non_host_is_rejected() {
+        let (mut room, _host, bob) = active_room();
+        let (out, dirty) = dispatch(
+            &mut room,
+            &bob,
+            ClientMessage::SetLocked { locked: true },
+            Instant::now(),
+        );
+        match out.as_slice() {
+            [Outbound::Player(target, ServerMessage::Error { code, .. })] => {
+                assert_eq!(target, &bob);
+                assert_eq!(code, "not_authorized");
+            }
+            _ => panic!("expected targeted error, got {out:?}"),
+        }
+        assert!(!dirty);
+        assert!(!room.locked, "a rejected toggle must not lock the room");
     }
 
     #[test]
     fn test_dispatch_nudge_targets_current_player() {
         let (mut room, host, bob) = active_room(); // host is current
-        let out = dispatch(&mut room, &bob, ClientMessage::Nudge, Instant::now());
+        let (out, dirty) = dispatch(&mut room, &bob, ClientMessage::Nudge, Instant::now());
         match out.as_slice() {
             [Outbound::Player(target, ServerMessage::Nudged)] => assert_eq!(target, &host),
             _ => panic!("expected nudge to host, got {out:?}"),
         }
+        assert!(
+            !dirty,
+            "nudge cooldowns are not persisted; must NOT mark dirty"
+        );
     }
 }

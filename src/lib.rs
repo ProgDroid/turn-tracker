@@ -2,6 +2,7 @@ pub mod cleanup;
 pub mod domain;
 pub mod error;
 pub mod persist;
+pub mod ratelimit;
 pub mod registry;
 pub mod server;
 pub mod wire;

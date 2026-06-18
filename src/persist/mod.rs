@@ -1,10 +1,12 @@
 //! Durable room-state persistence: a `Store` trait and a file-backed snapshot.
 
 pub mod file;
+pub mod lock;
 pub mod snapshot;
 pub mod writer;
 
 pub use file::FileStore;
+pub use lock::acquire_data_lock;
 pub use snapshot::{PlayerSnapshot, RegistrySnapshot, RoomSnapshot, SnapshotState};
 
 use thiserror::Error;

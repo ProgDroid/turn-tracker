@@ -106,6 +106,7 @@ mod tests {
             rooms: vec![RoomSnapshot {
                 code: "ABC123".into(),
                 state: SnapshotState::Lobby,
+                locked: false,
                 players: vec![],
                 current_player_id: None,
                 previous_player_id: None,

@@ -11,7 +11,9 @@ FROM rust:1-bookworm AS build
 WORKDIR /app
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src ./src
-RUN cargo build --release --bin turn-tracker
+# --locked: fail the build if Cargo.lock is stale rather than silently resolving
+# new versions, so the image is reproducible.
+RUN cargo build --release --locked --bin turn-tracker
 
 # ---- runtime ----
 FROM debian:bookworm-slim

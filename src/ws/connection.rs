@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::StreamExt as _;
+use tokio::sync::broadcast;
 
 use crate::domain::ids::PlayerId;
 use crate::domain::player::{self, NameError};
@@ -85,7 +86,21 @@ pub async fn ws_route(
                                 break;
                             }
                         }
-                        Err(_) => break,
+                        // The receiver fell behind and the channel dropped messages.
+                        // Don't tear down the socket — resync by pushing the current
+                        // authoritative room state so the client recovers.
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            log::warn!("ws lagged: room={code} dropped {skipped} msg(s); resyncing");
+                            if let Some(room) = registry.public_room(&code)
+                                && forward(&mut session, &ServerMessage::RoomState { room })
+                                    .await
+                                    .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        // Channel closed (room swept/removed) — end the connection.
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
             }
@@ -102,6 +117,9 @@ pub async fn ws_route(
                     vec![Outbound::All(ServerMessage::RoomState {
                         room: PublicRoom::from(&*room),
                     })],
+                    // `connected` is not part of the snapshot, so a disconnect
+                    // changes no persisted state.
+                    false,
                 )
             });
         }
@@ -162,8 +180,8 @@ async fn handle_text(
     };
 
     let _ = registry.with_room_mut(code, |room| {
-        let out = dispatch(room, &actor, msg, Instant::now());
-        ((), out)
+        let (out, dirty) = dispatch(room, &actor, msg, Instant::now());
+        ((), out, dirty)
     });
     Ok(())
 }
@@ -215,7 +233,10 @@ async fn handle_join(
                 p.connected = true;
             }
             // Always send Welcome on (re-)join so the client can set `me`.
+            // Reconnection by token bypasses the lock — a dropped player returns.
             JoinOutcome::Joined(id, token, true)
+        } else if room.locked {
+            JoinOutcome::RoomLocked
         } else if room.is_full() {
             JoinOutcome::RoomFull
         } else {
@@ -227,9 +248,12 @@ async fn handle_join(
             JoinOutcome::Joined(..) => vec![Outbound::All(ServerMessage::RoomState {
                 room: PublicRoom::from(&*room),
             })],
-            JoinOutcome::RoomFull => Vec::new(),
+            JoinOutcome::RoomFull | JoinOutcome::RoomLocked => Vec::new(),
         };
-        (outcome, broadcast)
+        // Only a brand-new player changes persisted state. A rejoin just flips
+        // `connected` (not snapshotted); a full room changes nothing.
+        let dirty = matches!(outcome, JoinOutcome::Joined(_, _, false));
+        (outcome, broadcast, dirty)
     });
 
     match resolved {
@@ -245,6 +269,18 @@ async fn handle_join(
                 &ServerMessage::Welcome {
                     player_id: id,
                     token,
+                },
+            )
+            .await;
+            Ok(())
+        }
+        Ok(JoinOutcome::RoomLocked) => {
+            log::info!("ws join rejected: room={code} is locked");
+            let _ = forward(
+                session,
+                &ServerMessage::Error {
+                    code: "room_locked".into(),
+                    message: "Room is locked".into(),
                 },
             )
             .await;
@@ -271,6 +307,7 @@ enum JoinOutcome {
     /// `(player_id, token, was_rejoin)`
     Joined(PlayerId, String, bool),
     RoomFull,
+    RoomLocked,
 }
 
 #[allow(clippy::result_unit_err)] // unit error is an intentional "just terminate" signal

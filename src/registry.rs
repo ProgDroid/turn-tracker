@@ -11,7 +11,7 @@ use crate::persist::snapshot::{RegistrySnapshot, RoomSnapshot};
 use crate::domain::ids::{PlayerId, RoomCode};
 use crate::domain::room::Room;
 use crate::error::AppError;
-use crate::wire::ServerMessage;
+use crate::wire::{PublicRoom, ServerMessage};
 
 /// A server message plus its delivery target.
 #[derive(Debug, Clone)]
@@ -123,6 +123,14 @@ impl Registry {
         self.rooms.contains_key(code)
     }
 
+    /// Read-only public snapshot of a room's current state. Does NOT mark the
+    /// registry dirty (no mutation occurs). Used to resync a client that fell
+    /// behind on its broadcast channel.
+    #[must_use]
+    pub fn public_room(&self, code: &str) -> Option<PublicRoom> {
+        self.rooms.get(code).map(|h| PublicRoom::from(&h.room))
+    }
+
     /// Subscribe to a room's broadcast channel.
     ///
     /// # Errors
@@ -137,19 +145,27 @@ impl Registry {
     /// Run a closure with mutable access to a room, then broadcast any produced
     /// messages. Returns the closure's result.
     ///
+    /// The closure returns `(result, outbound, dirty)`. `dirty` MUST be true iff
+    /// the closure changed state that is persisted in a snapshot (see
+    /// [`RoomSnapshot`]). Read-only refreshes, rejected/unauthorized actions,
+    /// connection flips (`connected` is not persisted), and nudges (cooldowns
+    /// are not persisted) pass `false` so they don't trigger snapshot churn.
+    ///
     /// # Errors
     /// `AppError::RoomNotFound` if the code is unknown.
     pub fn with_room_mut<F, T>(&self, code: &str, f: F) -> Result<T, AppError>
     where
-        F: FnOnce(&mut Room) -> (T, Vec<Outbound>),
+        F: FnOnce(&mut Room) -> (T, Vec<Outbound>, bool),
     {
         let mut handle = self.rooms.get_mut(code).ok_or(AppError::RoomNotFound)?;
-        let (result, outbound) = f(&mut handle.room);
+        let (result, outbound, dirty) = f(&mut handle.room);
         for msg in outbound {
             // Ignore send errors: a closed channel just means no live receivers.
             let _ = handle.tx.send(msg);
         }
-        self.mark_dirty();
+        if dirty {
+            self.mark_dirty();
+        }
         // Release the DashMap shard lock before returning to reduce contention.
         drop(handle);
         Ok(result)
@@ -202,7 +218,7 @@ mod tests {
                 let p = room.player_by_token(&token).expect("token preserved");
                 assert_eq!(p.id, host_id);
                 assert!(!p.connected, "player starts disconnected after load");
-                ((), vec![])
+                ((), vec![], false)
             })
             .unwrap();
         // subscribing works → a fresh channel was created
@@ -228,6 +244,43 @@ mod tests {
             Err(AppError::RoomCapacityReached) => {}
             other => panic!("expected RoomCapacityReached, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_with_room_mut_marks_dirty_only_when_flag_is_set() {
+        let reg = Registry::new();
+        let (code, _h, _t) = reg.create_room("Host".into(), Instant::now()).unwrap();
+        assert!(reg.take_dirty(), "create marked dirty");
+
+        // dirty = false → no snapshot churn (e.g. a rejected action or nudge).
+        reg.with_room_mut(&code.0, |_room| ((), vec![], false))
+            .unwrap();
+        assert!(
+            !reg.take_dirty(),
+            "closure returning dirty=false must not mark dirty"
+        );
+
+        // dirty = true → a real persisted-state change.
+        reg.with_room_mut(&code.0, |_room| ((), vec![], true))
+            .unwrap();
+        assert!(
+            reg.take_dirty(),
+            "closure returning dirty=true must mark dirty"
+        );
+    }
+
+    #[test]
+    fn test_public_room_reads_state_without_marking_dirty() {
+        let reg = Registry::new();
+        let (code, _h, _t) = reg.create_room("Host".into(), Instant::now()).unwrap();
+        assert!(reg.take_dirty(), "create marked dirty");
+        let public = reg.public_room(&code.0).expect("room exists");
+        assert_eq!(public.code, code.0);
+        assert!(
+            !reg.take_dirty(),
+            "public_room is a read: must not mark dirty"
+        );
+        assert!(reg.public_room("NOPE12").is_none());
     }
 
     #[test]

@@ -24,7 +24,7 @@ fn room_survives_save_and_reload_and_is_reconnectable() {
         .with_room_mut(&code.0, |room| {
             room.add_player("Bob".into(), now);
             room.start_game(&host_id, now).unwrap();
-            ((), vec![])
+            ((), vec![], true)
         })
         .unwrap();
 
@@ -45,7 +45,7 @@ fn room_survives_save_and_reload_and_is_reconnectable() {
                 .player_by_token(&host_token)
                 .expect("host reconnectable by token");
             assert!(!host.connected, "players start disconnected after reload");
-            ((), vec![])
+            ((), vec![], false)
         })
         .unwrap();
 

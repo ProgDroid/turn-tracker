@@ -15,6 +15,25 @@ async fn main() -> std::io::Result<()> {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(60);
 
+    // Single-instance guard: refuse to start if another process already owns the
+    // data dir, so two instances can't clobber each other's snapshot. Held for
+    // the whole process lifetime; the OS frees it on exit (including crash).
+    let _data_lock = match turn_tracker::persist::acquire_data_lock(std::path::Path::new(
+        &snapshot_path,
+    )) {
+        Ok(lock) => lock,
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            log::error!(
+                "another turn-tracker instance already owns the data dir for {snapshot_path}; refusing to start"
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            log::error!("could not acquire data-dir lock for {snapshot_path}: {e}");
+            std::process::exit(1);
+        }
+    };
+
     let store: Arc<dyn Store> = Arc::new(FileStore::new(snapshot_path));
     let snap = store.load().unwrap_or_else(|e| {
         log::error!("snapshot load failed: {e}; starting with no rooms");

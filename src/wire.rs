@@ -27,6 +27,9 @@ pub enum ClientMessage {
     RemovePlayer {
         player_id: PlayerId,
     },
+    SetLocked {
+        locked: bool,
+    },
     Nudge,
 }
 
@@ -59,6 +62,7 @@ pub struct PublicPlayer {
 pub struct PublicRoom {
     pub code: String,
     pub state: PublicState,
+    pub locked: bool,
     pub players: Vec<PublicPlayer>,
     pub current_player_id: Option<PlayerId>,
 }
@@ -71,6 +75,7 @@ impl From<&Room> for PublicRoom {
                 RoomState::Lobby => PublicState::Lobby,
                 RoomState::Active => PublicState::Active,
             },
+            locked: room.locked,
             players: room
                 .players
                 .iter()
