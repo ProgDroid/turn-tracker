@@ -14,6 +14,7 @@
     "roomCode": "Room code",
     "copyLink": "Copy link",
     "showQr": "Show QR",
+    "hideQr": "Hide QR",
     "copied": "Copied to clipboard",
     "players": "Players",
     "dragToReorder": "Drag to reorder",

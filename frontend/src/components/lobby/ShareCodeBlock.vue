@@ -32,7 +32,7 @@ onMounted(renderQr)
     <div class="code">{{ code }}</div>
     <div class="actions">
       <button @click="copy">{{ copied ? t('lobby.copied') : t('lobby.copyLink') }}</button>
-      <button @click="showQr = !showQr">{{ t('lobby.showQr') }}</button>
+      <button @click="showQr = !showQr">{{ showQr ? t('lobby.hideQr') : t('lobby.showQr') }}</button>
     </div>
     <canvas v-show="showQr" ref="canvas" class="qr" />
   </div>
