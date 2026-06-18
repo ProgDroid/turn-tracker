@@ -2,14 +2,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import ReorderSheet from '@/components/overlays/ReorderSheet.vue'
-import PlayerRow from '@/components/player/PlayerRow.vue'
+import DraggablePlayerList from '@/components/player/DraggablePlayerList.vue'
 import { useRoomStore } from '@/stores/room'
 import { i18n } from '@/i18n'
 import type { PublicRoom } from '@/types/wire'
 
 function room(): PublicRoom {
   return {
-    code: 'GR7K9P', state: 'active', current_player_id: 'p1',
+    code: 'GR7K9P', state: 'active', locked: false, current_player_id: 'p1',
     players: [
       { id: 'p1', name: 'Sam', is_host: true, connected: true },
       { id: 'p2', name: 'Alice', is_host: false, connected: true },
@@ -35,13 +35,10 @@ describe('ReorderSheet', () => {
     expect(w.text()).toContain('Bob')
   })
 
-  it('committing a drag sends the reordered ids via set_order', async () => {
+  it('committing a reorder sends the reordered ids via set_order', () => {
     const { s, w } = setup()
     const spy = vi.spyOn(s, 'setOrder')
-    const rows = w.findAllComponents(PlayerRow)
-    // drag the first row (p1) onto the third slot (p3)
-    await rows[0].trigger('dragstart')
-    await rows[2].trigger('drop')
+    w.findComponent(DraggablePlayerList).vm.$emit('reorder', ['p2', 'p3', 'p1'])
     expect(spy).toHaveBeenCalledWith(['p2', 'p3', 'p1'])
   })
 

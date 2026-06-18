@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import LobbySubview from '@/components/lobby/LobbySubview.vue'
-import PlayerRow from '@/components/player/PlayerRow.vue'
+import DraggablePlayerList from '@/components/player/DraggablePlayerList.vue'
 import { useRoomStore } from '@/stores/room'
 import { i18n } from '@/i18n'
 
@@ -12,7 +12,7 @@ function withHost(isHost: boolean) {
   s._handle({
     type: 'room_state',
     room: {
-      code: 'GR7K9P', state: 'lobby', current_player_id: null,
+      code: 'GR7K9P', state: 'lobby', locked: false, current_player_id: null,
       players: [
         { id: 'p1', name: 'Sam', is_host: true, connected: true },
         { id: 'p2', name: 'Bob', is_host: false, connected: true },
@@ -37,13 +37,13 @@ describe('LobbySubview', () => {
     expect(w.text()).toContain('Waiting for Sam')
   })
 
-  it('host dragging a player to a new slot dispatches the reordered list', async () => {
+  it('host reordering the player list dispatches the new order via set_order', async () => {
     const s = useRoomStore()
     s.me = { playerId: 'p1', token: 't' }
     s._handle({
       type: 'room_state',
       room: {
-        code: 'GR7K9P', state: 'lobby', current_player_id: null,
+        code: 'GR7K9P', state: 'lobby', locked: false, current_player_id: null,
         players: [
           { id: 'p1', name: 'Sam', is_host: true, connected: true },
           { id: 'p2', name: 'Bob', is_host: false, connected: true },
@@ -53,10 +53,26 @@ describe('LobbySubview', () => {
     })
     const setOrder = vi.spyOn(s, 'setOrder')
     const w = mount(LobbySubview, { global: { plugins: [i18n] } })
-    const rows = w.findAllComponents(PlayerRow)
-    // Drag the first player (p1) and drop it onto the third slot (p3).
-    await rows[0].trigger('dragstart')
-    await rows[2].trigger('drop')
+    // The draggable list owns the pointer interaction (covered in its own spec);
+    // here we assert the lobby wires its reorder event through to the store.
+    w.findComponent(DraggablePlayerList).vm.$emit('reorder', ['p2', 'p3', 'p1'])
     expect(setOrder).toHaveBeenCalledWith(['p2', 'p3', 'p1'])
+  })
+
+  it('host can toggle the room lock from the lobby', async () => {
+    const s = withHost(true)
+    const setLocked = vi.spyOn(s, 'setLocked')
+    const w = mount(LobbySubview, { global: { plugins: [i18n] } })
+    const toggle = w.find('[data-test=lock-toggle]')
+    expect(toggle.exists()).toBe(true)
+    // Room starts unlocked → first click locks it.
+    await toggle.trigger('click')
+    expect(setLocked).toHaveBeenCalledWith(true)
+  })
+
+  it('non-host does not see the lock toggle', () => {
+    withHost(false)
+    const w = mount(LobbySubview, { global: { plugins: [i18n] } })
+    expect(w.find('[data-test=lock-toggle]').exists()).toBe(false)
   })
 })

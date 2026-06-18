@@ -12,6 +12,7 @@ export type PublicState = 'lobby' | 'active'
 export interface PublicRoom {
   code: string
   state: PublicState
+  locked: boolean
   players: PublicPlayer[]
   current_player_id: PlayerId | null
 }
@@ -31,6 +32,7 @@ export type ClientMessage =
   | { type: 'undo_turn' }
   | { type: 'skip_player'; player_id: PlayerId }
   | { type: 'remove_player'; player_id: PlayerId }
+  | { type: 'set_locked'; locked: boolean }
   | { type: 'nudge' }
 
 /** Known server error codes (see src/ws/dispatch.rs). */
@@ -40,3 +42,5 @@ export type ErrorCode =
   | 'wrong_state'
   | 'not_your_turn'
   | 'nudge_cooldown'
+  | 'room_full'
+  | 'room_locked'

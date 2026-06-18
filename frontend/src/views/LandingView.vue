@@ -28,7 +28,9 @@ async function create() {
 
 function join() {
   if (code.value.length !== 6 || !name.value.trim()) return
-  router.push({ path: `/room/${code.value}`, query: { name: name.value.trim() } })
+  // Carry the name in history state, not the URL, so the room link stays clean
+  // and shareable. RoomView reads history.state.name on arrival.
+  router.push({ path: `/room/${code.value}`, state: { name: name.value.trim() } })
 }
 </script>
 

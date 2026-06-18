@@ -49,7 +49,7 @@ describe('LandingView', () => {
     expect(router.currentRoute.value.fullPath).toBe('/')
   })
 
-  it('joins an existing room, navigating with the name as a query param', async () => {
+  it('joins an existing room with a clean URL (name not in the query string)', async () => {
     const { wrapper, router } = mountView()
     await router.isReady()
     await wrapper.get('.link').trigger('click') // switch to join mode
@@ -58,6 +58,6 @@ describe('LandingView', () => {
     await wrapper.findComponent(AppButton).trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/room/GR7K9P')
-    expect(router.currentRoute.value.query.name).toBe('Sam')
+    expect(router.currentRoute.value.query.name).toBeUndefined()
   })
 })

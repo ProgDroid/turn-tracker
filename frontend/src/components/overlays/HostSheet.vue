@@ -15,6 +15,7 @@ function skip() { const id = store.currentPlayer?.id; if (id) store.skipPlayer(i
 function undo() { store.undoTurn(); emit('close') }
 function reorder() { emit('reorder') }
 function remove() { const id = store.currentPlayer?.id; if (id) store.removePlayer(id); emit('close') }
+function toggleLock() { store.setLocked(!store.locked); emit('close') }
 </script>
 
 <template>
@@ -47,6 +48,13 @@ function remove() { const id = store.currentPlayer?.id; if (id) store.removePlay
           <span class="body"><span class="label">{{ t('host.reorder') }}</span></span>
           <span class="hint">{{ t('host.reorderHint') }}</span>
         </button>
+        <button class="item" data-test="lock-toggle" @click="toggleLock">
+          <span class="ico lock" aria-hidden="true">{{ store.locked ? '🔒' : '🔓' }}</span>
+          <span class="body">
+            <span class="label">{{ store.locked ? t('host.unlockRoom') : t('host.lockRoom') }}</span>
+          </span>
+          <span class="hint">{{ store.locked ? t('host.unlockRoomHint') : t('host.lockRoomHint') }}</span>
+        </button>
         <button class="item danger" @click="remove">
           <span class="ico remove" aria-hidden="true">×</span>
           <span class="body"><span class="label">{{ t('host.remove') }}</span></span>
@@ -77,6 +85,7 @@ function remove() { const id = store.currentPlayer?.id; if (id) store.removePlay
 
 .ico { width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 800; flex-shrink: 0; }
 .ico.skip { background: rgba(251,191,36,.16); color: var(--tt-warning); font-size: 14px; }
+.ico.lock { background: rgba(251,191,36,.12); font-size: 14px; }
 .ico.undo { background: rgba(56,189,248,.16); color: #38bdf8; font-size: 15px; }
 .ico.remove { background: rgba(251,113,133,.16); color: var(--tt-danger); font-size: 16px; }
 .ico.reorder { flex-direction: column; gap: 3px; background: none; }

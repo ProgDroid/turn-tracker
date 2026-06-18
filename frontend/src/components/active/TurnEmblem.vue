@@ -16,5 +16,9 @@ defineProps<{ fast?: boolean }>()
 .pulse.delay { animation-delay: 1.2s; }
 .pulse.fast { animation-duration: 1.6s; }
 .core { position: relative; width: 108px; height: 108px; border-radius: 50%; background: var(--tt-on-accent); color: var(--tt-accent); display: flex; align-items: center; justify-content: center; font-size: 46px; font-weight: 800; }
-@media (prefers-reduced-motion: reduce) { .pulse { animation: none; opacity: 0; } }
+/* No motion: keep the rings as a static concentric halo instead of hiding them. */
+@media (prefers-reduced-motion: reduce) {
+  .pulse { animation: none; opacity: .14; transform: scale(1.28); }
+  .pulse.delay { opacity: .07; transform: scale(1.72); }
+}
 </style>

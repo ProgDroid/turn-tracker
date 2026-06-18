@@ -7,6 +7,7 @@ function room(partial: Partial<PublicRoom> = {}): PublicRoom {
   return {
     code: 'GR7K9P',
     state: 'active',
+    locked: false,
     players: [
       { id: 'p1', name: 'Sam', is_host: true, connected: true },
       { id: 'p2', name: 'Alice', is_host: false, connected: true },
@@ -104,6 +105,27 @@ describe('room store', () => {
     expect(s.roomGone).toBe(true)
   })
 
+  it('re-sends join when the socket reopens after a reconnect', () => {
+    const sock = fakeSocket()
+    const s = useRoomStore()
+    s._setSocket(sock as any)
+    s.codeInView = 'GR7K9P'
+    localStorage.setItem('tt:token:GR7K9P', 'tok')
+    const onStatus = sock.onStatusChange.mock.calls[0][0] as (st: string) => void
+
+    // First open, before Welcome: me is null → store must NOT auto-join
+    // (the view owns the initial join; auto-joining here would double up).
+    onStatus('open')
+    expect(sock.send).not.toHaveBeenCalled()
+
+    // Once joined, a reconnect (open again) must re-join by token so the
+    // fresh server connection re-authenticates us.
+    s.me = { playerId: 'p1', token: 'tok' }
+    onStatus('reconnecting')
+    onStatus('open')
+    expect(sock.send).toHaveBeenCalledWith({ type: 'join', player_token: 'tok' })
+  })
+
   it("socket reporting 'gone' marks the room as gone (server-restart recovery)", () => {
     const sock = fakeSocket()
     const s = useRoomStore()
@@ -121,7 +143,30 @@ describe('room store', () => {
     s._setSocket(sock as any)
     s.endTurn()
     s.skipPlayer('p3')
+    s.setLocked(true)
     expect(sock.send).toHaveBeenCalledWith({ type: 'end_turn' })
     expect(sock.send).toHaveBeenCalledWith({ type: 'skip_player', player_id: 'p3' })
+    expect(sock.send).toHaveBeenCalledWith({ type: 'set_locked', locked: true })
+  })
+
+  it('locked getter mirrors the room flag', () => {
+    const s = useRoomStore()
+    expect(s.locked).toBe(false)
+    s._handle({ type: 'room_state', room: room({ locked: true }) })
+    expect(s.locked).toBe(true)
+  })
+
+  it('room_locked on a brand-new join (no me) flags joinRejected', () => {
+    const s = useRoomStore()
+    s.me = null
+    s._handle({ type: 'error', code: 'room_locked', message: 'This room is locked' })
+    expect(s.joinRejected).toBe('This room is locked')
+  })
+
+  it('room_locked does NOT flag joinRejected once joined (host locking mid-game)', () => {
+    const s = useRoomStore()
+    s.me = { playerId: 'p1', token: 't' }
+    s._handle({ type: 'error', code: 'room_locked', message: 'x' })
+    expect(s.joinRejected).toBeNull()
   })
 })

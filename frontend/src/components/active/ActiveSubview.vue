@@ -76,7 +76,7 @@ const playerCount = computed(() => store.room?.players.length ?? 0)
 
     <!-- 06 NOT YOUR TURN -->
     <div v-else class="watch">
-      <div class="roomline">
+      <div class="roomline" :class="{ hostpad: store.isHost }">
         <span class="rtag">{{ t('active.roomTag', { code: store.room.code }) }}</span>
         <span class="rcount">{{ t('active.playerCount', { n: playerCount }) }}</span>
       </div>
@@ -120,18 +120,20 @@ const playerCount = computed(() => store.room?.players.length ?? 0)
 }
 .gear { font-size: 14px; }
 
-.hero { min-height: 100%; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 30px 24px; background: var(--tt-accent); color: var(--tt-on-accent); animation: ttHeroWipe var(--tt-dur-hero) var(--tt-ease) both; }
+.hero { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 30px 24px; background: var(--tt-accent); color: var(--tt-on-accent); animation: ttHeroWipe var(--tt-dur-hero) var(--tt-ease) both; }
 .eyebrow { font-family: var(--tt-font-mono); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; }
 .eyebrow.dark { color: var(--tt-text-muted); }
 .hero-title { font-size: 46px; font-weight: 800; letter-spacing: -.035em; margin: 38px 0 0; animation: ttRise var(--tt-dur-hero) var(--tt-ease) both; }
 .hero-hint { font-weight: 600; opacity: .72; }
 .spacer { flex: 1; }
 
-.claim, .watch { min-height: 100%; display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--tt-3); padding: 30px 24px; }
+.claim, .watch { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--tt-3); padding: 30px 24px; }
 .pill { display: inline-flex; padding: 8px 15px; border-radius: var(--tt-r-full); background: rgba(52,211,153,.12); border: 1px solid rgba(52,211,153,.3); color: var(--tt-accent); font-family: var(--tt-font-mono); font-size: 12px; font-weight: 700; }
 
 .watch { gap: var(--tt-2); }
 .roomline { width: 100%; display: flex; justify-content: space-between; align-items: center; font-family: var(--tt-font-mono); font-size: 12px; letter-spacing: .1em; color: var(--tt-text-faint); }
+/* Host's floating gear sits top-right; reserve room so the player count clears it. */
+.roomline.hostpad { padding-right: 96px; }
 .watch-body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--tt-3); }
 .away { display: inline-flex; gap: 9px; padding: 9px 16px; border-radius: var(--tt-r-full); background: var(--tt-surface-1); border: 1px solid var(--tt-surface-2); color: var(--tt-accent); font-family: var(--tt-font-mono); font-weight: 700; }
 

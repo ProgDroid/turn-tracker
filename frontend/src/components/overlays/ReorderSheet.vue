@@ -1,27 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoomStore } from '@/stores/room'
-import PlayerRow from '@/components/player/PlayerRow.vue'
+import DraggablePlayerList from '@/components/player/DraggablePlayerList.vue'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 const { t } = useI18n()
 const store = useRoomStore()
-
-// Mirror LobbySubview's drag-to-reorder: track the dragged index locally and
-// commit the new order via set_order (allowed in active state server-side).
-const dragIndex = ref<number | null>(null)
-function onDragStart(i: number) { dragIndex.value = i }
-function onDrop(to: number) {
-  const from = dragIndex.value
-  dragIndex.value = null
-  if (from === null || from === to || !store.room) return
-  const ids = store.room.players.map((p) => p.id)
-  const [moved] = ids.splice(from, 1)
-  ids.splice(to, 0, moved)
-  store.setOrder(ids)
-}
 </script>
 
 <template>
@@ -32,18 +17,12 @@ function onDrop(to: number) {
         <span class="title">{{ t('host.reorder') }}</span>
         <span class="muted">{{ t('lobby.dragToReorder') }}</span>
       </header>
-      <div v-if="store.room" class="list">
-        <PlayerRow
-          v-for="(p, i) in store.room.players"
-          :key="p.id"
-          :player="p"
-          :is-you="p.id === store.me?.playerId"
-          draggable
-          @dragstart="onDragStart(i)"
-          @dragover.prevent
-          @drop="onDrop(i)"
-        />
-      </div>
+      <DraggablePlayerList
+        v-if="store.room"
+        :players="store.room.players"
+        :me-id="store.me?.playerId"
+        @reorder="store.setOrder($event)"
+      />
       <button class="done" @click="emit('close')">{{ t('host.done') }}</button>
     </div>
   </div>

@@ -27,6 +27,8 @@ interface State {
   nudgeTimer: ReturnType<typeof setInterval> | null
   joiningWithToken: boolean
   roomGone: boolean
+  /** Set when a brand-new join was refused (room locked or full); routes home. */
+  joinRejected: string | null
   nudgeReceivedAt: number | null
 }
 
@@ -43,6 +45,7 @@ export const useRoomStore = defineStore('room', {
     nudgeTimer: null,
     joiningWithToken: false,
     roomGone: false,
+    joinRejected: null,
     nudgeReceivedAt: null,
   }),
 
@@ -81,6 +84,7 @@ export const useRoomStore = defineStore('room', {
       if (!s.room) return 'landing'
       return s.room.state === 'active' ? 'active' : 'lobby'
     },
+    locked: (s): boolean => !!s.room?.locked,
   },
 
   actions: {
@@ -88,6 +92,12 @@ export const useRoomStore = defineStore('room', {
       this.socket = sock
       sock.onStatusChange((st) => {
         this.connStatus = st
+        // A reconnect opens a FRESH server-side connection that starts
+        // unauthenticated (me = None), so we must re-send `join` or every
+        // subsequent action fails with `not_joined`. Guard on `me`: the very
+        // first open is driven by the view (me still null until Welcome),
+        // which avoids a double-join here. Rejoin-by-token is idempotent.
+        if (st === 'open' && this.me) this.join()
         // Terminal 'gone' = reconnect cap exhausted against a room that no
         // longer exists (e.g. server restart). Trigger room-gone recovery.
         if (st === 'gone') this.roomGone = true
@@ -101,6 +111,7 @@ export const useRoomStore = defineStore('room', {
     connect(code: string) {
       this.codeInView = code.toUpperCase()
       this.roomGone = false
+      this.joinRejected = null
       this.ensureSocket()
       this.socket!.connect(this.codeInView, (m) => this._handle(m))
     },
@@ -137,6 +148,11 @@ export const useRoomStore = defineStore('room', {
             this.joiningWithToken = false
             this.roomGone = true
           }
+          // A brand-new join we never completed (no `me` yet) was refused
+          // because the room is locked or full → bounce back to landing.
+          if ((m.code === 'room_locked' || m.code === 'room_full') && !this.me) {
+            this.joinRejected = m.message
+          }
           break
       }
     },
@@ -168,6 +184,7 @@ export const useRoomStore = defineStore('room', {
     undoTurn() { this.socket?.send({ type: 'undo_turn' }) },
     skipPlayer(id: PlayerId) { this.socket?.send({ type: 'skip_player', player_id: id }) },
     removePlayer(id: PlayerId) { this.socket?.send({ type: 'remove_player', player_id: id }) },
+    setLocked(locked: boolean) { this.socket?.send({ type: 'set_locked', locked }) },
     nudge() {
       if (this.nudgeCooldownRemaining > 0) return
       this.socket?.send({ type: 'nudge' })

@@ -37,11 +37,22 @@ async function mountAt(code: string) {
 describe('RoomView', () => {
   beforeEach(() => { localStorage.clear(); vi.restoreAllMocks() })
 
-  it('connects on mount (sets code in view)', async () => {
+  it('connects on mount and rejoins by token when one is saved', async () => {
+    localStorage.setItem('tt:token:GR7K9P', 'tok')
     const { store } = await mountAt('GR7K9P')
     expect(store.codeInView).toBe('GR7K9P')
     expect(store.socket!.connect).toHaveBeenCalled()
-    // join is dispatched after connect via queueMicrotask → fake socket send.
+    // A saved token → join is dispatched after connect via queueMicrotask.
+    expect(store.socket!.send).toHaveBeenCalled()
+  })
+
+  it('prompts for a name (and does not join) for a tokenless shared-link visitor', async () => {
+    const { store, wrapper } = await mountAt('GR7K9P')
+    expect(store.socket!.connect).toHaveBeenCalled()
+    expect(store.socket!.send).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test=join-name]').exists()).toBe(true)
+    await wrapper.find('[data-test=join-name]').setValue('Sam')
+    await wrapper.find('[data-test=join-submit]').trigger('click')
     expect(store.socket!.send).toHaveBeenCalled()
   })
 
