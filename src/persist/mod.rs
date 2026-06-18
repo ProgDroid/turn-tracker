@@ -2,6 +2,7 @@
 
 pub mod file;
 pub mod snapshot;
+pub mod writer;
 
 pub use file::FileStore;
 pub use snapshot::{PlayerSnapshot, RegistrySnapshot, RoomSnapshot, SnapshotState};
