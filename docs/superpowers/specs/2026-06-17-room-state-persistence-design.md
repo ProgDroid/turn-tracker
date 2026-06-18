@@ -201,3 +201,14 @@ not an obstacle to it:
 
 The trigger for Tier 1/2 is usually zero-downtime deploys or multi-region
 latency, not raw CPU.
+
+## Deployment Note
+
+The snapshot file holds player tokens, so it must be on persistent, private
+storage. On the Hetzner VPS / Docker deploy:
+
+- Set `TT_SNAPSHOT_PATH` to a path on a mounted volume (e.g. `/data/rooms.json`)
+  so the snapshot survives container recreation.
+- Ensure the process user can write that directory; the file is created `0600`.
+- `TT_SNAPSHOT_INTERVAL_SECS` defaults to 60; tune per restart cadence.
+- The data directory is git-ignored and must never be served by `actix-files`.
