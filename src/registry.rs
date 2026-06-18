@@ -1,9 +1,12 @@
 //! In-memory room storage with a per-room broadcast channel for fan-out.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use tokio::sync::broadcast;
+
+use crate::persist::snapshot::{RegistrySnapshot, RoomSnapshot};
 
 use crate::domain::ids::{PlayerId, RoomCode};
 use crate::domain::room::Room;
@@ -34,6 +37,7 @@ pub struct RoomHandle {
 #[derive(Default)]
 pub struct Registry {
     rooms: DashMap<String, RoomHandle>,
+    dirty: AtomicBool,
 }
 
 impl Registry {
@@ -41,6 +45,45 @@ impl Registry {
     pub fn new() -> Self {
         Self {
             rooms: DashMap::new(),
+            dirty: AtomicBool::new(false),
+        }
+    }
+
+    /// Mark that state changed since the last snapshot.
+    fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Return whether state changed since the last call, clearing the flag.
+    pub fn take_dirty(&self) -> bool {
+        self.dirty.swap(false, Ordering::SeqCst)
+    }
+
+    /// Build a serializable snapshot of every live room.
+    #[must_use]
+    pub fn snapshot(&self) -> RegistrySnapshot {
+        RegistrySnapshot {
+            rooms: self
+                .rooms
+                .iter()
+                .map(|entry| RoomSnapshot::from(&entry.value().room))
+                .collect(),
+        }
+    }
+
+    /// Rebuild a registry from a snapshot. Each room gets a fresh, empty
+    /// broadcast channel; the dirty flag starts clear.
+    #[must_use]
+    pub fn from_snapshot(snap: RegistrySnapshot) -> Self {
+        let rooms = DashMap::new();
+        for rs in snap.rooms {
+            let room = rs.into_room();
+            let (tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
+            rooms.insert(room.code.0.clone(), RoomHandle { room, tx });
+        }
+        Self {
+            rooms,
+            dirty: AtomicBool::new(false),
         }
     }
 
@@ -67,6 +110,7 @@ impl Registry {
             let (room, host_id, token) = Room::create(code.clone(), host_name, now);
             let (tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
             self.rooms.insert(code.0.clone(), RoomHandle { room, tx });
+            self.mark_dirty();
             // CODE only — never the host token.
             log::info!("room created: code={}", code.0);
             return Ok((code, host_id, token));
@@ -105,6 +149,7 @@ impl Registry {
             // Ignore send errors: a closed channel just means no live receivers.
             let _ = handle.tx.send(msg);
         }
+        self.mark_dirty();
         // Release the DashMap shard lock before returning to reduce contention.
         drop(handle);
         Ok(result)
@@ -122,6 +167,9 @@ impl Registry {
         for code in &expired {
             self.rooms.remove(code);
         }
+        if !expired.is_empty() {
+            self.mark_dirty();
+        }
         expired.len()
     }
 }
@@ -129,6 +177,37 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_dirty_flag_set_on_create_and_cleared_on_take() {
+        let reg = Registry::new();
+        assert!(!reg.take_dirty(), "fresh registry is clean");
+        reg.create_room("Host".into(), Instant::now()).unwrap();
+        assert!(reg.take_dirty(), "create_room marks dirty");
+        assert!(!reg.take_dirty(), "take_dirty clears the flag");
+    }
+
+    #[test]
+    fn test_snapshot_round_trip_preserves_room_and_token() {
+        let reg = Registry::new();
+        let now = Instant::now();
+        let (code, host_id, token) = reg.create_room("Host".into(), now).unwrap();
+
+        let rebuilt = Registry::from_snapshot(reg.snapshot());
+
+        assert!(rebuilt.contains(&code.0), "room survives snapshot");
+        // Host is reconnectable by token, and starts disconnected.
+        rebuilt
+            .with_room_mut(&code.0, |room| {
+                let p = room.player_by_token(&token).expect("token preserved");
+                assert_eq!(p.id, host_id);
+                assert!(!p.connected, "player starts disconnected after load");
+                ((), vec![])
+            })
+            .unwrap();
+        // subscribing works → a fresh channel was created
+        assert!(rebuilt.subscribe(&code.0).is_ok());
+    }
 
     #[test]
     fn test_create_room_inserts_and_is_findable() {
