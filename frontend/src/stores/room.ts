@@ -97,7 +97,11 @@ export const useRoomStore = defineStore('room', {
         // subsequent action fails with `not_joined`. Guard on `me`: the very
         // first open is driven by the view (me still null until Welcome),
         // which avoids a double-join here. Rejoin-by-token is idempotent.
-        if (st === 'open' && this.me) this.join()
+        // Also require a saved token: the auto-rejoin re-authenticates an
+        // already-welcomed player, which is ALWAYS by token (saved on welcome).
+        // Without one we'd send a nameless join and the server would mint a
+        // fresh default-named "Player" — a phantom duplicate. Never do that.
+        if (st === 'open' && this.me && loadToken(this.codeInView)) this.join()
         // Terminal 'gone' = reconnect cap exhausted against a room that no
         // longer exists (e.g. server restart). Trigger room-gone recovery.
         if (st === 'gone') this.roomGone = true
@@ -112,6 +116,12 @@ export const useRoomStore = defineStore('room', {
       this.codeInView = code.toUpperCase()
       this.roomGone = false
       this.joinRejected = null
+      // Entering a room is a fresh session. Drop any identity/room carried over
+      // from a previously-viewed room in this SPA session — otherwise the
+      // socket 'open' handler above would see the stale `me` as "already
+      // joined" and auto-send a nameless join, spawning a phantom "Player".
+      this.me = null
+      this.room = null
       this.ensureSocket()
       this.socket!.connect(this.codeInView, (m) => this._handle(m))
     },

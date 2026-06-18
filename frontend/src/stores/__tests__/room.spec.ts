@@ -126,6 +126,32 @@ describe('room store', () => {
     expect(sock.send).toHaveBeenCalledWith({ type: 'join', player_token: 'tok' })
   })
 
+  it('does NOT auto-join on open when no token is saved (prevents phantom "Player")', () => {
+    const sock = fakeSocket()
+    const s = useRoomStore()
+    s._setSocket(sock as any)
+    s.codeInView = 'NEWRM1'
+    // Stale identity left over from a previously-viewed room, but NO token for
+    // the room now in view. The old bug auto-sent a nameless join here, which
+    // the server turned into a default "Player" duplicate.
+    s.me = { playerId: 'pOld', token: 'old' }
+    const onStatus = sock.onStatusChange.mock.calls[0][0] as (st: string) => void
+    onStatus('open')
+    expect(sock.send).not.toHaveBeenCalled()
+  })
+
+  it('connect() resets stale identity/room from a prior room', () => {
+    const sock = fakeSocket()
+    const s = useRoomStore()
+    s._setSocket(sock as any)
+    s.me = { playerId: 'pOld', token: 'old' }
+    s._handle({ type: 'room_state', room: room() })
+    s.connect('newrm2')
+    expect(s.me).toBeNull()
+    expect(s.room).toBeNull()
+    expect(s.codeInView).toBe('NEWRM2')
+  })
+
   it("socket reporting 'gone' marks the room as gone (server-restart recovery)", () => {
     const sock = fakeSocket()
     const s = useRoomStore()
