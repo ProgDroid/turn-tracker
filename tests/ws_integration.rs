@@ -375,3 +375,74 @@ async fn test_gated_create_room_rejects_a_missing_token() {
         "an absent X-Create-Token must be rejected when the gate is on"
     );
 }
+
+/// Send a `join` with no token at all — the path that mints a brand-new player.
+fn join_anonymous() -> awc::ws::Message {
+    awc::ws::Message::Text(serde_json::json!({ "type": "join" }).to_string().into())
+}
+
+#[actix_web::test]
+async fn test_second_join_on_one_connection_is_rejected() {
+    use futures_util::SinkExt as _;
+
+    let addr = spawn_server().await;
+    let (_status, body) = post_create_room(&addr, None).await;
+    let code = body["room_code"].as_str().unwrap().to_owned();
+
+    // Plain-text WebSocket is intentional: loopback-only ephemeral-port test.
+    let ws_url = format!("{}://{addr}/ws/{code}", "ws");
+    let (_resp, mut conn) = awc::Client::new().ws(ws_url).connect().await.unwrap();
+
+    // First join succeeds and mints a player.
+    conn.send(join_anonymous()).await.unwrap();
+    let welcome = next_json(&mut conn).await;
+    assert_eq!(welcome["type"], "welcome", "first join must succeed");
+
+    // Second join on the SAME connection. Without a guard this mints a second
+    // player and strands the first at `connected: true` with no owner, because
+    // the connection's cleanup can only ever detach whichever player it holds
+    // last. Repeat it enough times and the room fills with phantoms.
+    conn.send(join_anonymous()).await.unwrap();
+    let msg = loop {
+        let m = next_json(&mut conn).await;
+        // Skip the room_state broadcast the first join triggered.
+        if m["type"] != "room_state" {
+            break m;
+        }
+    };
+    assert_eq!(
+        msg["type"], "error",
+        "a second join on a joined connection must be refused; got {msg}"
+    );
+    assert_eq!(
+        msg["code"], "wrong_state",
+        "must use a code the SPA already maps to a real string; got {msg}"
+    );
+}
+
+#[actix_web::test]
+async fn test_a_refused_join_still_allows_a_later_successful_join() {
+    use futures_util::SinkExt as _;
+
+    let addr = spawn_server().await;
+    let (_status, body) = post_create_room(&addr, None).await;
+    let code = body["room_code"].as_str().unwrap().to_owned();
+
+    // Plain-text WebSocket is intentional: loopback-only ephemeral-port test.
+    let ws_url = format!("{}://{addr}/ws/{code}", "ws");
+    let (_resp, mut conn) = awc::Client::new().ws(ws_url).connect().await.unwrap();
+
+    // A join carrying an unknown token is refused and leaves the connection
+    // un-joined, so the guard added for the duplicate-join case must NOT latch:
+    // a genuine retry has to keep working.
+    conn.send(join_by_token("not-a-real-token")).await.unwrap();
+    let refused = next_json(&mut conn).await;
+    assert_eq!(refused["code"], "not_found", "got {refused}");
+
+    conn.send(join_anonymous()).await.unwrap();
+    let welcome = next_json(&mut conn).await;
+    assert_eq!(
+        welcome["type"], "welcome",
+        "a retry after a refused join must still succeed; got {welcome}"
+    );
+}
