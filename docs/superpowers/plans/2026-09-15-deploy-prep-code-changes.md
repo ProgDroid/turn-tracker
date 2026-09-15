@@ -588,8 +588,8 @@ async fn test_stray_create_token_header_does_not_break_an_ungated_server() {
 
 - [ ] **Step 7: Run the integration tests and confirm they pass**
 
-Run: `cargo test --test ws_integration test_create_room test_stray_create_token`
-Expected: both PASS, before and after the handler change in Step 8.
+Run: `cargo test --test ws_integration`
+Expected: the whole file PASSes, before and after the handler change in Step 8. (Cargo takes a single `TESTNAME` positional, so run the file rather than naming both tests.)
 
 **This is deliberately not a red-green step, and that is the point.** These two
 tests pin the *gate-off* behaviour — that an unconfigured server keeps creating
@@ -832,7 +832,9 @@ createApp(App).use(createPinia()).use(router).use(i18n).mount('#app')
 
 - [ ] **Step 6: Add the error string**
 
-In `frontend/src/i18n/locales/en.json`, add to the `errors` object:
+In `frontend/src/i18n/locales/en.json`, insert this line into the `errors`
+object **immediately after the `"generic"` line**, so the trailing comma stays
+valid (`"reconnecting"` remains the last key):
 
 ```json
     "createForbidden": "Hosting is invite-only during the beta",
