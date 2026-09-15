@@ -12,6 +12,7 @@ use serde::Deserialize;
 
 use crate::domain::player::{self, NameError};
 use crate::error::AppError;
+use crate::gate;
 use crate::ratelimit::{self, RealIpKeyExtractor};
 use crate::registry::Registry;
 use actix_governor::GovernorConfig;
@@ -31,14 +32,31 @@ pub struct CreateRoomRequest {
 /// POST /api/rooms — create a room, returning the code + host credentials.
 ///
 /// # Errors
-/// `AppError::InvalidRequest` for an empty host name; `AppError::NameTooLong`
-/// if the name exceeds the length bound; `AppError::CodeExhausted` if no unique
-/// code is available; `AppError::RoomCapacityReached` if the server is full.
+/// `AppError::CreateForbidden` if `TT_CREATE_TOKEN` is set and the
+/// `X-Create-Token` header does not match; `AppError::InvalidRequest` for an
+/// empty host name; `AppError::NameTooLong` if the name exceeds the length
+/// bound; `AppError::CodeExhausted` if no unique code is available;
+/// `AppError::RoomCapacityReached` if the server is full.
 #[allow(clippy::unused_async)] // required by actix-web handler signature
+#[allow(clippy::future_not_send)]
+// actix-web's HttpRequest is not Send; handler runs on actix's single-threaded runtime
 pub async fn create_room(
+    req: actix_web::HttpRequest,
     registry: web::Data<Arc<Registry>>,
     body: web::Json<CreateRoomRequest>,
 ) -> Result<impl Responder, AppError> {
+    // Runs after the rate limiter (wrapped on the resource), so guessing the
+    // token is itself throttled.
+    let provided = req
+        .headers()
+        .get("X-Create-Token")
+        .and_then(|v| v.to_str().ok());
+    let expected = gate::create_token_from_env();
+    if !gate::create_allowed(provided, expected.as_deref()) {
+        log::warn!("room creation rejected: missing or wrong create token");
+        return Err(AppError::CreateForbidden);
+    }
+
     let name = match player::validate_name(&body.host_name) {
         Ok(name) => name,
         Err(NameError::Empty) => return Err(AppError::InvalidRequest),

@@ -196,3 +196,32 @@ async fn test_join_with_unknown_token_is_rejected() {
         "must use the code the frontend's stale-token recovery listens for"
     );
 }
+
+#[actix_web::test]
+async fn test_create_room_is_open_when_no_token_configured() {
+    // The env var is not set in the test process, so the gate is off and the
+    // existing E2E suite keeps working unchanged.
+    let addr = spawn_server().await;
+    let resp = awc::Client::new()
+        .post(format!("http://{addr}/api/rooms"))
+        .send_json(&serde_json::json!({ "host_name": "Host" }))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[actix_web::test]
+async fn test_stray_create_token_header_does_not_break_an_ungated_server() {
+    let addr = spawn_server().await;
+    let resp = awc::Client::new()
+        .post(format!("http://{addr}/api/rooms"))
+        .insert_header(("X-Create-Token", "irrelevant"))
+        .send_json(&serde_json::json!({ "host_name": "Host" }))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "with TT_CREATE_TOKEN unset, a stray header must be ignored"
+    );
+}
