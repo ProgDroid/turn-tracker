@@ -187,7 +187,10 @@ async fn test_join_with_unknown_token_is_rejected() {
         panic!("expected a text frame");
     };
     let msg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(msg["type"], "error", "unknown token must not mint a player; got {msg}");
+    assert_eq!(
+        msg["type"], "error",
+        "unknown token must not mint a player; got {msg}"
+    );
     assert_eq!(
         msg["code"], "not_found",
         "must use the code the frontend's stale-token recovery listens for"
