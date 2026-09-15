@@ -203,11 +203,15 @@ persists on their device. Everyone else just gets a room link.
 
 ### 5.7 WebSocket heartbeat
 
-**Honest scoping:** this is robustness, not a blocker. During active play the
-server broadcasts on every turn advance, which keeps every socket busy; genuine
-idling happens mainly in the lobby or when a player is away. Cut this first if
-you want to ship sooner — but it is a prerequisite for ever enabling
-Cloudflare's proxy, and it also cleans up half-open connections.
+**Decision: in scope for the first deploy** (confirmed 2026-09-15).
+
+During active play the server broadcasts on every turn advance, so sockets are
+rarely idle — which initially made this look cuttable. The case that changes it
+is the **lobby**: people arriving late, fumbling with phones, wandering off to
+make tea. A friends-and-family test is disproportionately lobby time, so idle
+sockets are over-represented in exactly the scenario being tested. It is also a
+prerequisite for ever enabling Cloudflare's proxy, and it cleans up half-open
+connections.
 
 **Design.** Per connection, a 30s interval sends a WebSocket Ping. Browsers
 answer Ping frames automatically at protocol level (the JS API cannot send
