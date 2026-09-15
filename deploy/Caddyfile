@@ -1,0 +1,21 @@
+# Caddy site config for whosego.app. Copied to /opt/turn-tracker/Caddyfile and
+# mounted read-only into the caddy container.
+
+whosego.app {
+	encode zstd gzip
+
+	reverse_proxy app:8080 {
+		# REQUIRED, not decorative. A bare `reverse_proxy` APPENDS the peer
+		# address to any X-Forwarded-For the client already sent, and the app's
+		# rate limiter reads the LEFTMOST entry — so without this override a
+		# client picks its own rate-limit bucket by sending the header, rotates
+		# it, and gets unlimited POST /api/rooms attempts. That would also
+		# remove the throttling that makes guessing TT_CREATE_TOKEN
+		# impractical. See DEPLOY.md section 2.
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+www.whosego.app {
+	redir https://whosego.app{uri} permanent
+}

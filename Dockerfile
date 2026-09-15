@@ -17,6 +17,12 @@ RUN cargo build --release --locked --bin turn-tracker
 
 # ---- runtime ----
 FROM debian:bookworm-slim
+# curl is for the container healthcheck (and for debugging on the box) —
+# debian-slim ships neither curl nor wget, so a healthcheck relying on either
+# would fail permanently and the container would sit "unhealthy" forever.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd -m app
 WORKDIR /home/app
 COPY --from=build /app/target/release/turn-tracker /usr/local/bin/turn-tracker
