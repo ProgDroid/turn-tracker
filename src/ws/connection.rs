@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use actix_web::{HttpRequest, HttpResponse, web};
-use futures_util::StreamExt as _;
+use futures_util::{Stream, StreamExt as _};
 use tokio::sync::broadcast;
 
 use crate::domain::ids::PlayerId;
@@ -22,7 +22,6 @@ use crate::ws::origin::{allowed_origins_from_env, origin_allowed};
 /// Returns 404 if the room does not exist; otherwise upgrades the connection.
 #[allow(clippy::future_not_send)]
 // actix-web types (HttpRequest, Payload) are not Send; handler runs on actix's single-threaded runtime
-#[allow(clippy::too_many_lines)]
 pub async fn ws_route(
     req: HttpRequest,
     stream: web::Payload,
@@ -47,107 +46,119 @@ pub async fn ws_route(
     if !registry.contains(&code) {
         return Ok(HttpResponse::NotFound().json(serde_json::json!({ "error": "Room not found" })));
     }
-    let (response, session, mut msg_stream) = actix_ws::handle(&req, stream)?;
+    let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
     let registry = registry.get_ref().clone();
 
-    actix_web::rt::spawn(async move {
-        let Ok(mut rx) = registry.subscribe(&code) else {
-            return;
-        };
-        log::info!("ws connected: room={code}");
-        let mut session = session;
-        let mut me: Option<PlayerId> = None;
-        let mut heartbeat = Heartbeat::new(CLIENT_TIMEOUT, Instant::now());
-        let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // `interval` yields immediately on its first tick; consume it so the
-        // first real ping happens one full interval from now.
-        ticker.tick().await;
+    actix_web::rt::spawn(run_connection(registry, code, session, msg_stream));
 
-        loop {
-            tokio::select! {
-                incoming = msg_stream.next() => {
-                    match incoming {
-                        // text is ByteString; .as_ref() gives &str
-                        Some(Ok(actix_ws::Message::Text(text)))
-                            if handle_text(&registry, &code, &mut me, &mut session, text.as_ref()).await.is_err() =>
+    Ok(response)
+}
+
+/// Run a WebSocket connection: handle liveness, dispatch, and cleanup.
+///
+/// Manages the select loop over incoming messages, broadcast events, and heartbeat ticks.
+#[allow(clippy::too_many_lines)]
+async fn run_connection<S>(
+    registry: Arc<Registry>,
+    code: String,
+    mut session: actix_ws::Session,
+    mut msg_stream: S,
+) where
+    S: Stream<Item = Result<actix_ws::Message, actix_ws::ProtocolError>> + Unpin,
+{
+    let Ok(mut rx) = registry.subscribe(&code) else {
+        return;
+    };
+    log::info!("ws connected: room={code}");
+    let mut me: Option<PlayerId> = None;
+    let mut heartbeat = Heartbeat::new(CLIENT_TIMEOUT, Instant::now());
+    let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // `interval` yields immediately on its first tick; consume it so the
+    // first real ping happens one full interval from now.
+    ticker.tick().await;
+
+    loop {
+        tokio::select! {
+            incoming = msg_stream.next() => {
+                match incoming {
+                    // text is ByteString; .as_ref() gives &str
+                    Some(Ok(actix_ws::Message::Text(text)))
+                        if handle_text(&registry, &code, &mut me, &mut session, text.as_ref()).await.is_err() =>
+                    {
+                        break;
+                    }
+                    Some(Ok(actix_ws::Message::Close(_))) | None => break,
+                    Some(Ok(actix_ws::Message::Ping(bytes))) => {
+                        let _ = session.pong(&bytes).await;
+                    }
+                    Some(Ok(actix_ws::Message::Pong(_))) => {
+                        heartbeat.record_pong(Instant::now());
+                    }
+                    _ => {}
+                }
+            }
+            broadcast = rx.recv() => {
+                match broadcast {
+                    Ok(Outbound::All(msg)) => {
+                        if forward(&mut session, &msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(Outbound::Player(target, msg)) => {
+                        if me.as_ref() == Some(&target)
+                            && forward(&mut session, &msg).await.is_err()
                         {
                             break;
                         }
-                        Some(Ok(actix_ws::Message::Close(_))) | None => break,
-                        Some(Ok(actix_ws::Message::Ping(bytes))) => {
-                            let _ = session.pong(&bytes).await;
-                        }
-                        Some(Ok(actix_ws::Message::Pong(_))) => {
-                            heartbeat.record_pong(Instant::now());
-                        }
-                        _ => {}
                     }
+                    // The receiver fell behind and the channel dropped messages.
+                    // Don't tear down the socket — resync by pushing the current
+                    // authoritative room state so the client recovers.
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        log::warn!("ws lagged: room={code} dropped {skipped} msg(s); resyncing");
+                        if let Some(room) = registry.public_room(&code)
+                            && forward(&mut session, &ServerMessage::RoomState { room })
+                                .await
+                                .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    // Channel closed (room swept/removed) — end the connection.
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
-                broadcast = rx.recv() => {
-                    match broadcast {
-                        Ok(Outbound::All(msg)) => {
-                            if forward(&mut session, &msg).await.is_err() {
-                                break;
-                            }
-                        }
-                        Ok(Outbound::Player(target, msg)) => {
-                            if me.as_ref() == Some(&target)
-                                && forward(&mut session, &msg).await.is_err()
-                            {
-                                break;
-                            }
-                        }
-                        // The receiver fell behind and the channel dropped messages.
-                        // Don't tear down the socket — resync by pushing the current
-                        // authoritative room state so the client recovers.
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            log::warn!("ws lagged: room={code} dropped {skipped} msg(s); resyncing");
-                            if let Some(room) = registry.public_room(&code)
-                                && forward(&mut session, &ServerMessage::RoomState { room })
-                                    .await
-                                    .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        // Channel closed (room swept/removed) — end the connection.
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
+            }
+            _ = ticker.tick() => {
+                if heartbeat.is_stale(Instant::now()) {
+                    log::info!("ws heartbeat timeout: room={code}");
+                    break;
                 }
-                _ = ticker.tick() => {
-                    if heartbeat.is_stale(Instant::now()) {
-                        log::info!("ws heartbeat timeout: room={code}");
-                        break;
-                    }
-                    if session.ping(b"").await.is_err() {
-                        break;
-                    }
+                if session.ping(b"").await.is_err() {
+                    break;
                 }
             }
         }
+    }
 
-        if let Some(id) = me {
-            log::info!("ws disconnected: room={code} player={}", id.0);
-            let _ = registry.with_room_mut(&code, |room| {
-                if let Some(p) = room.players.iter_mut().find(|p| p.id == id) {
-                    p.connected = false;
-                }
-                (
-                    (),
-                    vec![Outbound::All(ServerMessage::RoomState {
-                        room: PublicRoom::from(&*room),
-                    })],
-                    // `connected` is not part of the snapshot, so a disconnect
-                    // changes no persisted state.
-                    false,
-                )
-            });
-        }
-        let _ = session.close(None).await;
-    });
-
-    Ok(response)
+    if let Some(id) = me {
+        log::info!("ws disconnected: room={code} player={}", id.0);
+        let _ = registry.with_room_mut(&code, |room| {
+            if let Some(p) = room.players.iter_mut().find(|p| p.id == id) {
+                p.connected = false;
+            }
+            (
+                (),
+                vec![Outbound::All(ServerMessage::RoomState {
+                    room: PublicRoom::from(&*room),
+                })],
+                // `connected` is not part of the snapshot, so a disconnect
+                // changes no persisted state.
+                false,
+            )
+        });
+    }
+    let _ = session.close(None).await;
 }
 
 /// Handle one inbound text frame. Returns `Err(())` to terminate the connection.
