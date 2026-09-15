@@ -9,7 +9,7 @@ use futures_util::{Stream, StreamExt as _};
 use tokio::sync::broadcast;
 
 use crate::domain::ids::PlayerId;
-use crate::domain::player::{self, NameError};
+use crate::domain::player::{self, ConnEpoch, NameError};
 use crate::registry::{Outbound, Registry};
 use crate::wire::{ClientMessage, PublicRoom, ServerMessage};
 use crate::ws::dispatch::dispatch;
@@ -69,7 +69,9 @@ async fn run_connection<S>(
         return;
     };
     log::info!("ws connected: room={code}");
-    let mut me: Option<PlayerId> = None;
+    // The player this socket speaks for, plus the epoch proving it is still
+    // the connection that owns them (see `Room::attach_connection`).
+    let mut me: Option<(PlayerId, ConnEpoch)> = None;
     let mut heartbeat = Heartbeat::new(CLIENT_TIMEOUT, Instant::now());
     let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -105,7 +107,7 @@ async fn run_connection<S>(
                         }
                     }
                     Ok(Outbound::Player(target, msg)) => {
-                        if me.as_ref() == Some(&target)
+                        if me.as_ref().is_some_and(|(id, _)| id == &target)
                             && forward(&mut session, &msg).await.is_err()
                         {
                             break;
@@ -140,17 +142,24 @@ async fn run_connection<S>(
         }
     }
 
-    if let Some(id) = me {
+    if let Some((id, epoch)) = me {
         log::info!("ws disconnected: room={code} player={}", id.0);
         let _ = registry.with_room_mut(&code, |room| {
-            if let Some(p) = room.players.iter_mut().find(|p| p.id == id) {
-                p.connected = false;
-            }
-            (
-                (),
+            // Only the connection that still OWNS the player may mark them
+            // disconnected. A socket superseded by a reconnect (the phone came
+            // back before this one's heartbeat expired) is a ghost: it changes
+            // nothing and broadcasts nothing.
+            let out = if room.detach_connection(&id, epoch) {
                 vec![Outbound::All(ServerMessage::RoomState {
                     room: PublicRoom::from(&*room),
-                })],
+                })]
+            } else {
+                log::debug!("ws stale cleanup ignored: room={code} player={}", id.0);
+                Vec::new()
+            };
+            (
+                (),
+                out,
                 // `connected` is not part of the snapshot, so a disconnect
                 // changes no persisted state.
                 false,
@@ -165,7 +174,7 @@ async fn run_connection<S>(
 async fn handle_text(
     registry: &Arc<Registry>,
     code: &str,
-    me: &mut Option<PlayerId>,
+    me: &mut Option<(PlayerId, ConnEpoch)>,
     session: &mut actix_ws::Session,
     text: &str,
 ) -> Result<(), ()> {
@@ -198,7 +207,7 @@ async fn handle_text(
         .await;
     }
 
-    let Some(actor) = me.clone() else {
+    let Some(actor) = me.as_ref().map(|(id, _)| id.clone()) else {
         let _ = forward(
             session,
             &ServerMessage::Error {
@@ -223,7 +232,7 @@ async fn handle_text(
 async fn handle_join(
     registry: &Arc<Registry>,
     code: &str,
-    me: &mut Option<PlayerId>,
+    me: &mut Option<(PlayerId, ConnEpoch)>,
     session: &mut actix_ws::Session,
     player_token: Option<String>,
     player_name: Option<String>,
@@ -261,12 +270,17 @@ async fn handle_join(
         });
 
         let outcome: JoinOutcome = if let Some((id, token)) = existing {
-            if let Some(p) = room.players.iter_mut().find(|p| p.id == id) {
-                p.connected = true;
-            }
+            // Taking ownership here supersedes any older socket for this
+            // player, so its eventual cleanup cannot disconnect them.
+            let epoch = room.attach_connection(&id);
             // Always send Welcome on (re-)join so the client can set `me`.
             // Reconnection by token bypasses the lock — a dropped player returns.
-            JoinOutcome::Joined(id, token, true)
+            JoinOutcome::Joined {
+                id,
+                token,
+                epoch,
+                rejoined: true,
+            }
         } else if is_rejoin {
             // A token was supplied but matched nothing. Minting a player here
             // would create an empty-named ghost (the name is blank for rejoins),
@@ -278,11 +292,17 @@ async fn handle_join(
             JoinOutcome::RoomFull
         } else {
             let (id, token) = room.add_player(new_name, now);
-            JoinOutcome::Joined(id, token, false)
+            let epoch = room.attach_connection(&id);
+            JoinOutcome::Joined {
+                id,
+                token,
+                epoch,
+                rejoined: false,
+            }
         };
 
         let broadcast = match &outcome {
-            JoinOutcome::Joined(..) => vec![Outbound::All(ServerMessage::RoomState {
+            JoinOutcome::Joined { .. } => vec![Outbound::All(ServerMessage::RoomState {
                 room: PublicRoom::from(&*room),
             })],
             JoinOutcome::RoomFull | JoinOutcome::RoomLocked | JoinOutcome::UnknownToken => {
@@ -291,18 +311,29 @@ async fn handle_join(
         };
         // Only a brand-new player changes persisted state. A rejoin just flips
         // `connected` (not snapshotted); a full room changes nothing.
-        let dirty = matches!(outcome, JoinOutcome::Joined(_, _, false));
+        let dirty = matches!(
+            outcome,
+            JoinOutcome::Joined {
+                rejoined: false,
+                ..
+            }
+        );
         (outcome, broadcast, dirty)
     });
 
     match resolved {
-        Ok(JoinOutcome::Joined(id, token, rejoined)) => {
+        Ok(JoinOutcome::Joined {
+            id,
+            token,
+            epoch,
+            rejoined,
+        }) => {
             if rejoined {
                 log::debug!("ws rejoin-by-token: room={code} player={}", id.0);
             } else {
                 log::info!("ws join: room={code} player={}", id.0);
             }
-            *me = Some(id.clone());
+            *me = Some((id.clone(), epoch));
             let _ = forward(
                 session,
                 &ServerMessage::Welcome {
@@ -355,8 +386,13 @@ async fn handle_join(
 
 /// Result of resolving a join inside the room lock.
 enum JoinOutcome {
-    /// `(player_id, token, was_rejoin)`
-    Joined(PlayerId, String, bool),
+    Joined {
+        id: PlayerId,
+        token: String,
+        /// Proof that this connection owns `id` until a later one attaches.
+        epoch: ConnEpoch,
+        rejoined: bool,
+    },
     RoomFull,
     RoomLocked,
     /// A non-empty token was supplied but matched no player in the room.

@@ -30,6 +30,25 @@ pub enum NameError {
     TooLong,
 }
 
+/// Identifies WHICH live connection currently owns a player.
+///
+/// A player can be targeted by more than one socket at a time: a phone whose
+/// flow was silently dropped leaves a half-open connection behind while the
+/// same player re-attaches by token on a fresh one. Each attach is handed a
+/// distinct epoch, so a departing connection can tell whether it is still the
+/// owner before it clears `connected`.
+///
+/// [`ConnEpoch::NONE`] is the value a player carries before any socket has
+/// attached (and after a snapshot reload). It is never issued, so it can never
+/// match a live connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnEpoch(pub u64);
+
+impl ConnEpoch {
+    /// The epoch of a player no connection has ever attached to.
+    pub const NONE: Self = Self(0);
+}
+
 /// A single player in a room. `token` is a secret session credential and is
 /// NEVER serialized to other clients (see `wire::PublicPlayer`).
 #[derive(Debug, Clone)]
@@ -41,6 +60,9 @@ pub struct Player {
     pub connected: bool,
     /// When true, this player is skipped exactly once, then the flag clears.
     pub skip_next: bool,
+    /// Which connection last attached to this player. Process-local liveness
+    /// bookkeeping, deliberately NOT persisted (see `persist::snapshot`).
+    pub conn_epoch: ConnEpoch,
 }
 
 impl Player {
@@ -53,6 +75,7 @@ impl Player {
             is_host,
             connected: true,
             skip_next: false,
+            conn_epoch: ConnEpoch::NONE,
         }
     }
 }
@@ -68,6 +91,11 @@ mod tests {
         assert!(!p.skip_next);
         assert!(p.is_host);
         assert_eq!(p.name, "Alice");
+        assert_eq!(
+            p.conn_epoch,
+            ConnEpoch::NONE,
+            "a player owns no connection until one attaches"
+        );
     }
 
     #[test]

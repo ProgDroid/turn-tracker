@@ -225,3 +225,76 @@ async fn test_stray_create_token_header_does_not_break_an_ungated_server() {
         "with TT_CREATE_TOKEN unset, a stray header must be ignored"
     );
 }
+
+/// A `join` frame carrying an existing player's secret token.
+fn join_by_token(token: &str) -> awc::ws::Message {
+    awc::ws::Message::Text(
+        serde_json::json!({ "type": "join", "player_token": token })
+            .to_string()
+            .into(),
+    )
+}
+
+#[actix_web::test]
+async fn test_stale_connection_cleanup_does_not_disconnect_a_reattached_player() {
+    let addr = spawn_server().await;
+    let client = awc::Client::new();
+    let mut resp = client
+        .post(format!("http://{addr}/api/rooms"))
+        .send_json(&serde_json::json!({ "host_name": "Host" }))
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let code = body["room_code"].as_str().unwrap().to_owned();
+    let host_token = body["token"].as_str().unwrap().to_owned();
+
+    // Plain-text WebSocket is intentional: loopback-only ephemeral-port test.
+    let ws_url = format!("{}://{addr}/ws/{code}", "ws");
+
+    // Connection A: the socket that will later go away (carrier NAT drop, then
+    // a heartbeat timeout — indistinguishable from a close as far as cleanup
+    // is concerned).
+    let (_r, mut first) = awc::Client::new().ws(&ws_url).connect().await.unwrap();
+    first.send(join_by_token(&host_token)).await.unwrap();
+    assert_eq!(next_json(&mut first).await["type"], "welcome");
+
+    // Connection B: the same player re-attaches by token while A is still open.
+    let (_r, mut second) = awc::Client::new().ws(&ws_url).connect().await.unwrap();
+    second.send(join_by_token(&host_token)).await.unwrap();
+    let welcome = next_json(&mut second).await;
+    assert_eq!(welcome["type"], "welcome");
+    let player_id = welcome["player_id"].as_str().unwrap().to_owned();
+
+    // A now departs. Its cleanup must not clear `connected` on a player whose
+    // live connection is B.
+    first.send(awc::ws::Message::Close(None)).await.unwrap();
+    drop(first);
+    actix_web::rt::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Provoke a fresh authoritative RoomState and inspect what it says about B.
+    second
+        .send(awc::ws::Message::Text(
+            serde_json::json!({ "type": "set_locked", "locked": true })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    loop {
+        let msg = next_json(&mut second).await;
+        if msg["type"] == "room_state" && msg["room"]["locked"] == true {
+            let me = msg["room"]["players"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["id"] == player_id.as_str())
+                .expect("the re-attached player must still be in the room");
+            assert_eq!(
+                me["connected"], true,
+                "the departing connection must not mark a re-attached player disconnected; got {msg}"
+            );
+            break;
+        }
+    }
+}
