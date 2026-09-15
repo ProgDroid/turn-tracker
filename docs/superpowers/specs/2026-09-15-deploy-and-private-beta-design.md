@@ -347,3 +347,45 @@ reachable from the session that wrote this.
    networks are IPv4-only and this is the one thing that must work everywhere.
 2. `www` at all? Included as a redirect; costs nothing and stops a typo dead-ending.
 3. How many test hosts? Affects nothing technically — one shared token either way.
+
+## 13. Deferred — discuss at deploy time
+
+Both of these are deliberately parked, not forgotten. Neither blocks the plan.
+
+### 13.1 Should the repo stay public after release?
+
+Currently public to support job applications — employers are pointed at it from
+a CV, and that need outlives the release. Intended monetisation is a Ko-fi
+donation pot, which does not by itself argue for going private: there is no
+revenue to protect and no moat to lose, and open source alongside a tip jar is a
+common, coherent pairing.
+
+Working assumption: **stay public.** Reasons to revisit would be adding
+accounts, payments, or any user data, which would raise the stakes on every
+publicly disclosed bug.
+
+Note that going private also has a direct cost to this design: free arm64
+runners and unmetered Actions minutes are public-repo benefits, and the box
+currently pulls from GHCR unauthenticated because the package is public. A
+private repo makes the CD slower, metered, and more complex.
+
+**Carry into the deploy discussion:** Actions logs on a public repo are
+world-readable. Secret *values* are masked, but a `set -x` around the SSH step,
+or any command echoing an interpolated secret, leaks. Decide on a standing rule
+for the deploy job rather than relying on remembering.
+
+### 13.2 Is a non-rolling deploy the right call?
+
+§2 rules out zero-downtime deploys and §5.3 relies on Compose's stop-then-start
+recreate. Worth re-examining, but note what the question actually decomposes
+into: the app takes an **exclusive OS lock** on the data directory and refuses
+to start a second instance, so a rolling deploy is not a deployment-config
+change — it requires rethinking single-instance ownership of the snapshot
+(external state, or lock hand-off, or accepting two writers).
+
+So the real question is "should this stay single-instance?", which is a much
+larger one than the deploy mechanism suggests. Current position: a ~3s restart
+sits well inside the client's ~23s reconnect budget, and rooms survive via the
+snapshot, so the downtime is close to invisible in play. Revisit if the live
+test shows reconnects are uglier than expected, or if uptime ever matters more
+than simplicity.
