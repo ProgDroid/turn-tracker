@@ -1,0 +1,50 @@
+# Deploy stack for turn-tracker. Copied to /opt/turn-tracker/ alongside the
+# Caddyfile and a .env created from .env.example.
+#
+# Compose's default recreate is stop-then-start, which is what the app's
+# single-instance data-directory lock requires. Do NOT turn this into a rolling
+# update: a second instance refuses to start and exits 1.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+  app:
+    image: ghcr.io/progdroid/turn-tracker:main
+    restart: unless-stopped
+    # NO `ports:` stanza, deliberately. The rate limiter trusts
+    # X-Forwarded-For, which is only unspoofable while Caddy is the sole route
+    # to this container. Publishing a port here would let a client connect
+    # directly and forge the header.
+    env_file:
+      - .env
+    volumes:
+      - tt_data:/data
+    # On SIGTERM the server drains for up to 5s and only then writes the final
+    # snapshot. Compose's 10s default can kill it mid-drain, losing up to one
+    # snapshot interval of room state. See DEPLOY.md section 7.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  # Holds the ACME account and issued certificates. This MUST persist — losing
+  # it re-issues on every deploy and will hit Let's Encrypt rate limits.
+  caddy_data:
+  caddy_config:
+  # Room snapshot plus the single-instance .lock file.
+  tt_data:

@@ -135,7 +135,9 @@ traffic to the origin.
   limits) and `caddy_config`.
 - **`app`** — `ghcr.io/progdroid/turn-tracker:main`. **No `ports:` stanza**;
   reachable only on the internal compose network. `restart: unless-stopped`.
-  Healthcheck hits `GET /health`. Env from `/opt/turn-tracker/.env`. Mounts
+  Healthcheck hits `GET /health` with `curl`, which the runtime image installs
+  explicitly — `debian:bookworm-slim` ships neither `curl` nor `wget`, so a
+  healthcheck assuming either would sit permanently unhealthy. Env from `/opt/turn-tracker/.env`. Mounts
   named volume `tt_data` at `/data`. `stop_grace_period: 30s` — the default of
   10s can kill the container before Actix drains and the final snapshot is
   written (see `DEPLOY.md` §7).

@@ -1,2 +1,5 @@
 /target
 /data/
+
+# The filled-in deploy env holds the beta token; this repo is public.
+deploy/.env
