@@ -155,6 +155,13 @@ pub async fn run(registry: Arc<Registry>, bind: &str, static_dir: String) -> std
             .configure(|cfg| config(cfg, registry.clone(), &governor, create_token.clone()))
             .service(spa_files(&static_dir))
     })
+    // Actix force-stops workers only after this timeout. It defaults to 30s,
+    // and the heartbeat keeps WebSockets healthy right through shutdown, so a
+    // single connected phone would hold `run()` open past Docker Compose's
+    // 10s default `stop_grace_period` — the container is SIGKILLed and the
+    // final snapshot in `main` never runs. Five seconds drains comfortably and
+    // leaves the rest of the grace period for the snapshot write.
+    .shutdown_timeout(5)
     .bind(bind)?
     .run()
     .await

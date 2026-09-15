@@ -7,8 +7,15 @@ use std::time::{Duration, Instant};
 /// proxy if it is ever enabled in front of the app.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
-/// How long a connection may go without a Pong before it is closed. Two
-/// intervals plus slack, so one dropped Pong does not kill a live connection.
+/// How long a connection may go without a Pong before it is considered stale.
+/// Two intervals plus slack, so one dropped Pong does not kill a live
+/// connection.
+///
+/// This is the staleness THRESHOLD, not the time to close. Staleness is only
+/// evaluated on [`HEARTBEAT_INTERVAL`] ticks and the comparison is strict, so
+/// a connection actually closes on the first tick more than 90s after its last
+/// Pong — somewhere in the 90-120s range, and typically near 120s, because in
+/// steady state the last Pong arrives just after a tick.
 pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Tracks when a connection last proved it was alive.
@@ -37,7 +44,10 @@ impl Heartbeat {
         self.last_pong = now;
     }
 
-    /// Whether the peer has been silent for longer than the timeout.
+    /// Whether the peer has been silent for STRICTLY longer than the timeout.
+    ///
+    /// Callers poll this on a tick, so the moment a connection is torn down
+    /// lags the threshold by up to one tick interval — see [`CLIENT_TIMEOUT`].
     #[must_use]
     pub fn is_stale(&self, now: Instant) -> bool {
         now.duration_since(self.last_pong) > self.timeout

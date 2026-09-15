@@ -136,7 +136,9 @@ traffic to the origin.
 - **`app`** — `ghcr.io/progdroid/turn-tracker:main`. **No `ports:` stanza**;
   reachable only on the internal compose network. `restart: unless-stopped`.
   Healthcheck hits `GET /health`. Env from `/opt/turn-tracker/.env`. Mounts
-  named volume `tt_data` at `/data`.
+  named volume `tt_data` at `/data`. `stop_grace_period: 30s` — the default of
+  10s can kill the container before Actix drains and the final snapshot is
+  written (see `DEPLOY.md` §7).
 
 Compose's default recreate is stop-then-start, which is exactly what the
 single-instance lock in §5.5 requires. No rolling-update configuration.
@@ -146,7 +148,9 @@ single-instance lock in §5.5 requires. No rolling-update configuration.
 ```
 whosego.app {
 	encode zstd gzip
-	reverse_proxy app:8080
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
 }
 
 www.whosego.app {
@@ -154,8 +158,14 @@ www.whosego.app {
 }
 ```
 
-Caddy sets `X-Forwarded-For` on `reverse_proxy` by default, satisfying
-`DEPLOY.md` §2, and obtains/renews the certificate over HTTP-01 automatically.
+`header_up X-Forwarded-For {remote_host}` is required, not decorative. A bare
+`reverse_proxy` **appends** the client address to any `X-Forwarded-For` the
+client already sent, and the app's rate limiter reads the **leftmost** entry —
+so without the override an attacker can pick their own rate-limit bucket by
+sending a header, rotate it, and get unlimited `POST /api/rooms` attempts. The
+override replaces the header with the actual peer address, which is what
+`DEPLOY.md` §2 requires. Caddy obtains/renews the certificate over HTTP-01
+automatically.
 It handles the HTTP→HTTPS redirect itself, which `.app` requires anyway as an
 HSTS-preloaded TLD. WebSocket upgrades pass through `reverse_proxy` without
 extra configuration.
@@ -182,8 +192,15 @@ persistent volume.
 **Behaviour.** Unset or empty ⇒ no gate, exactly mirroring how
 `ALLOWED_ORIGINS` already degrades for development, so local runs and the
 Playwright E2E suite are unaffected. When set, `POST /api/rooms` requires
-header `X-Create-Token` to match, and returns `403` with wire error code
-`create_forbidden` otherwise.
+header `X-Create-Token` to match, and otherwise returns `403` with the standard
+HTTP error envelope this codebase already uses — `{"error": "Hosting is
+invite-only during the beta"}`. There is deliberately no machine-readable
+`code` field: the HTTP envelope has never carried one (codes are the WebSocket
+`ServerMessage::Error` shape), and the SPA branches on the `403` status.
+
+The token is resolved from the environment once at startup and injected as
+application state, so the handler does not read the process environment per
+request and the enabled gate is testable without mutating the environment.
 
 **Why a header, not a query parameter:** query strings land in proxy access
 logs and leak via `Referer`. The SPA holds the token and sends it as a header.
@@ -194,8 +211,8 @@ guessing the token is itself rate-limited.
 **Frontend.** On landing, if `?k=<token>` is present, store it under
 `tt.createToken` in `localStorage` and strip it from the URL via
 `history.replaceState`. The create-room call attaches the header when a stored
-token exists. A `create_forbidden` response renders a plain message —
-"Hosting is invite-only during the beta" — reusing the existing error display.
+token exists. A `403` response renders a plain message — "Hosting is
+invite-only during the beta" — reusing the existing error display.
 **The join path is untouched**, so guests scanning a QR see no difference.
 
 **Distribution.** Hosts get `https://whosego.app/?k=<token>` once; the token
@@ -216,8 +233,16 @@ connections.
 **Design.** Per connection, a 30s interval sends a WebSocket Ping. Browsers
 answer Ping frames automatically at protocol level (the JS API cannot send
 pings, which is why this must be server-initiated). Track the last Pong; close
-the connection after 90s of silence. 30s sits comfortably under every
-intermediary timeout we might meet, including Cloudflare's.
+the connection once more than 90s has passed without one. Staleness is only
+evaluated on the same 30s ticks, so the actual close lands somewhere in the
+**90-120s** range — typically near 120s, since in steady state the last pong
+arrives just after a tick. That looseness is fine: the point is to reap
+half-open sockets eventually, not promptly.
+
+30s sits comfortably under every intermediary timeout we might meet, including
+Cloudflare's. Note the direction of that requirement — because the server pings
+every 30s the connection is never idle for longer than that, so an
+intermediary's idle timeout only needs to exceed 30s with margin.
 
 ### 5.8 Stale-token fix
 

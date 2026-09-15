@@ -26,18 +26,44 @@ If `ALLOWED_ORIGINS` is unset/empty, WebSocket Origin checking is **disabled**
 origin(s), e.g. `ALLOWED_ORIGINS=https://turns.example.com`. The server logs a
 warning at startup when it is unset.
 
-### 2. Reverse proxy must set `X-Forwarded-For`, and the container must not be exposed directly
+### 2. Reverse proxy must OVERWRITE `X-Forwarded-For`, and the container must not be exposed directly
 
 Room creation (`POST /api/rooms`) is rate-limited **per client IP**. Because the
 app sits behind a proxy, it reads the client IP from `X-Forwarded-For` /
-`Forwarded`. For this to be both correct and unspoofable:
+`Forwarded`, taking the **leftmost** entry. For this to be both correct and
+unspoofable, two things must hold.
 
-- The proxy **must** set/overwrite `X-Forwarded-For` (Caddy's `reverse_proxy`
-  and nginx's `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` do
-  this).
-- The app container **must** be reachable **only** through the proxy — do not
-  publish its port directly to the internet. Otherwise a client could forge
-  `X-Forwarded-For` and dodge the rate limit.
+**The proxy must overwrite the header, not append to it.** This is the easy one
+to get wrong, because the common defaults append:
+
+- Caddy's bare `reverse_proxy` **appends** the client address to whatever
+  `X-Forwarded-For` the client sent.
+- nginx's `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`
+  **also appends** — that is exactly what `$proxy_add_x_forwarded_for` means.
+
+Either way a request carrying `X-Forwarded-For: 203.0.113.9` arrives upstream
+as `203.0.113.9, <real client IP>`, and the limiter buckets on the
+attacker-chosen leftmost value. Rotating it gives unlimited `POST /api/rooms`
+attempts, which also removes the rate limiting that `TT_CREATE_TOKEN` (§5)
+relies on to make guessing the shared secret impractical.
+
+Configure the proxy to replace the header outright. In Caddy:
+
+```
+reverse_proxy app:8080 {
+	header_up X-Forwarded-For {remote_host}
+}
+```
+
+In nginx, use `$remote_addr` rather than `$proxy_add_x_forwarded_for`:
+
+```
+proxy_set_header X-Forwarded-For $remote_addr;
+```
+
+**The app container must be reachable only through the proxy.** Do not publish
+its port directly to the internet; a direct client could otherwise forge
+`X-Forwarded-For` and dodge the rate limit whatever the proxy does.
 
 ### 3. Run a single instance
 
@@ -72,11 +98,34 @@ the per-IP rate limiter on the same endpoint, which runs first.
 
 ### 6. WebSocket heartbeat
 
-The server pings each WebSocket every 30s and closes a connection after 90s
-without a pong. Any reverse proxy in front of the app must therefore allow idle
-WebSocket connections to live at least 90s. Caddy imposes no such timeout by
-default. This is also why the app is served with Cloudflare's proxy disabled
-(grey cloud) — see the deploy spec.
+The server pings each WebSocket every 30s. Liveness is only re-checked on those
+same 30s ticks, and the check is a strict "more than 90s since the last pong",
+so a dead connection is actually closed somewhere in the **90-120s** range —
+typically close to 120s, because in steady state the last pong lands just after
+a tick.
+
+What this asks of a reverse proxy is the opposite of a long idle timeout: the
+server's own pings mean the connection is never idle for more than 30s, so the
+proxy's idle timeout only has to comfortably exceed **30s**, not 90s. Any sane
+margin over the ping interval (60s or more) is fine. Caddy imposes no WebSocket
+idle timeout by default. The heartbeat is also why the app is served with
+Cloudflare's proxy disabled (grey cloud) — see the deploy spec.
+
+### 7. Allow time to shut down cleanly
+
+On SIGTERM the server stops accepting connections, drains what is in flight for
+up to 5 seconds, and only then writes the final snapshot. Give the container
+more grace than that or it is killed mid-drain and the last snapshot interval
+of room state is lost:
+
+```yaml
+services:
+  app:
+    stop_grace_period: 30s
+```
+
+Docker Compose's default is **10s**, which is not enough margin. Look for
+`final snapshot written on shutdown` in the logs to confirm a clean stop.
 
 ## Health check
 

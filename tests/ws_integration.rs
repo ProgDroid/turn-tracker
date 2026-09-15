@@ -170,6 +170,19 @@ async fn test_locked_room_rejects_new_joiner_but_allows_token_rejoin() {
     let err = next_json(&mut newcomer).await;
     assert_eq!(err["type"], "error");
     assert_eq!(err["code"], "room_locked");
+
+    // An UNKNOWN token presented to a locked room is `not_found`, not
+    // `room_locked`. The lock check never runs: an unrecognised token means
+    // "your identity is gone", which is what drives the client down the
+    // clear-token-and-re-prompt path rather than showing "room is locked".
+    let (_r, mut stale) = awc::Client::new().ws(&ws_url).connect().await.unwrap();
+    stale.send(join_by_token("not-a-real-token")).await.unwrap();
+    let err = next_json(&mut stale).await;
+    assert_eq!(err["type"], "error");
+    assert_eq!(
+        err["code"], "not_found",
+        "a stale token must send the client to re-prompt, not to the lock message; got {err}"
+    );
 }
 
 #[actix_web::test]
