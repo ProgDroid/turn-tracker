@@ -89,6 +89,7 @@
     "room_locked": "This room is locked",
     "bad_name": "Name must be 1–40 characters",
     "generic": "Something went wrong",
+    "createForbidden": "Hosting is invite-only during the beta",
     "reconnecting": "Reconnecting…"
   }
 }

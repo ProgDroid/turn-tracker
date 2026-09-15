@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { saveToken } from '@/services/tokenStore'
+import { loadCreateToken } from '@/services/createToken'
 import AppButton from '@/components/ui/AppButton.vue'
 import CodeInput from '@/components/ui/CodeInput.vue'
 
@@ -15,12 +16,18 @@ const error = ref('')
 
 async function create() {
   error.value = ''
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const createToken = loadCreateToken()
+  if (createToken) headers['X-Create-Token'] = createToken
   const res = await fetch('/api/rooms', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({ host_name: name.value.trim() }),
   })
-  if (!res.ok) { error.value = t('errors.generic'); return }
+  if (!res.ok) {
+    error.value = res.status === 403 ? t('errors.createForbidden') : t('errors.generic')
+    return
+  }
   const data = (await res.json()) as { room_code: string; player_id: string; token: string }
   saveToken(data.room_code, data.token)
   router.push({ path: `/room/${data.room_code}` })
