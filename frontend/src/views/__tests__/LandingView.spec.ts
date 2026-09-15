@@ -60,4 +60,47 @@ describe('LandingView', () => {
     expect(router.currentRoute.value.path).toBe('/room/GR7K9P')
     expect(router.currentRoute.value.query.name).toBeUndefined()
   })
+
+  it('sends the create token header when one is stored', async () => {
+    localStorage.setItem('tt:createToken', 'host-token')
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ room_code: 'GR7K9P', player_id: 'p1', token: 'tok' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { wrapper, router } = mountView()
+    await router.isReady()
+    await wrapper.get('[data-test=name]').setValue('Sam')
+    await wrapper.get('[data-test=create]').trigger('click')
+    await flushPromises()
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>
+    expect(headers['X-Create-Token']).toBe('host-token')
+  })
+
+  it('omits the header entirely when no token is stored', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ room_code: 'GR7K9P', player_id: 'p1', token: 'tok' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { wrapper, router } = mountView()
+    await router.isReady()
+    await wrapper.get('[data-test=name]').setValue('Sam')
+    await wrapper.get('[data-test=create]').trigger('click')
+    await flushPromises()
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>
+    expect(headers['X-Create-Token']).toBeUndefined()
+  })
+
+  it('shows the invite-only message on 403', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }))
+    const { wrapper, router } = mountView()
+    await router.isReady()
+    await wrapper.get('[data-test=name]').setValue('Sam')
+    await wrapper.get('[data-test=create]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('invite-only')
+  })
 })
