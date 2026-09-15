@@ -1020,7 +1020,7 @@ git commit -m "docs: document TT_CREATE_TOKEN and the WebSocket heartbeat"
 
 - `cargo test --workspace` passes (backend suite grows from 95 by roughly 11).
 - `cargo clippy --all-targets -- -D warnings` and `cargo fmt --all -- --check` clean.
-- `cd frontend && npm run test && npm run build` both pass (frontend suite grows from 78 by 9).
+- `cd frontend && npm run test && npm run build` both pass (frontend suite grows from 80 to 89).
 - CI green on the branch.
 - `DEPLOY.md` documents `TT_CREATE_TOKEN` and the heartbeat.
 
