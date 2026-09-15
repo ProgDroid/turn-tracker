@@ -237,6 +237,29 @@ async fn handle_join(
     player_token: Option<String>,
     player_name: Option<String>,
 ) -> Result<(), ()> {
+    // One connection owns at most one player, for its whole life. A second
+    // join would overwrite `me`, and the end-of-loop cleanup can only ever
+    // detach whichever player it holds last — so the earlier one would be
+    // stranded `connected: true` with no owner, sitting in the turn rotation
+    // where nobody can claim it. Repeating it fills the room to MAX_PLAYERS
+    // with phantoms.
+    //
+    // No legitimate client does this: the SPA's auto-rejoin fires on a fresh
+    // socket, where `me` is None. A join that was REFUSED leaves `me` None
+    // too, so a genuine retry still works.
+    if me.is_some() {
+        log::warn!("ws duplicate join refused: room={code} (connection already joined)");
+        let _ = forward(
+            session,
+            &ServerMessage::Error {
+                code: "wrong_state".into(),
+                message: "Already joined on this connection".into(),
+            },
+        )
+        .await;
+        return Ok(());
+    }
+
     // Validate a fresh player's name up front (rejoin-by-token reuses the
     // stored name, so it bypasses this). Absent/blank names keep the legacy
     // "Player" default; an over-long name is rejected.
