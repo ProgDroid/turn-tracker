@@ -5,21 +5,34 @@ use std::sync::Arc;
 use actix_web::{App, HttpServer, web};
 use futures_util::{SinkExt as _, StreamExt as _};
 
+use turn_tracker::gate::CreateToken;
 use turn_tracker::ratelimit;
 use turn_tracker::registry::Registry;
 use turn_tracker::server;
 
-#[allow(clippy::unused_async)] // no internal awaits, but callers use .await for consistency
+/// Spawn a server with the room-creation gate OFF.
 async fn spawn_server() -> String {
+    spawn_server_gated(None).await
+}
+
+/// Spawn a server with the room-creation gate set to `create_token`.
+///
+/// The gate is injected rather than read from `TT_CREATE_TOKEN`, so an enabled
+/// gate is testable without `std::env::set_var` (`unsafe` under edition 2024,
+/// and racy across concurrently running tests).
+#[allow(clippy::unused_async)] // no internal awaits, but callers use .await for consistency
+async fn spawn_server_gated(create_token: Option<&str>) -> String {
     let registry = Arc::new(Registry::new());
     let governor = ratelimit::room_create_config();
+    let create_token = CreateToken::new(create_token.map(str::to_owned));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let srv = HttpServer::new(move || {
         let registry = registry.clone();
         let governor = governor.clone();
-        App::new().configure(|cfg: &mut web::ServiceConfig| {
-            server::config(cfg, registry.clone(), &governor);
+        let create_token = create_token.clone();
+        App::new().configure(move |cfg: &mut web::ServiceConfig| {
+            server::config(cfg, registry.clone(), &governor, create_token.clone());
         })
     })
     .listen(listener)
@@ -297,4 +310,55 @@ async fn test_stale_connection_cleanup_does_not_disconnect_a_reattached_player()
             break;
         }
     }
+}
+
+// --- room-creation gate, ENABLED (spec §8: "set + correct ⇒ 200, set + wrong
+// ⇒ 403"). The unset case is covered above. ---
+
+/// Post a room-creation request, optionally presenting `X-Create-Token`.
+/// Returns the status code and the parsed JSON body.
+#[allow(clippy::future_not_send)]
+// awc's ClientResponse is not Send; these run on actix's single-threaded test runtime
+async fn post_create_room(addr: &str, token: Option<&str>) -> (u16, serde_json::Value) {
+    let req = awc::Client::new().post(format!("http://{addr}/api/rooms"));
+    let req = match token {
+        Some(t) => req.insert_header(("X-Create-Token", t)),
+        None => req,
+    };
+    let mut resp = req
+        .send_json(&serde_json::json!({ "host_name": "Host" }))
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    (status, body)
+}
+
+#[actix_web::test]
+async fn test_gated_create_room_accepts_the_correct_token() {
+    let addr = spawn_server_gated(Some("s3cret-token")).await;
+    let (status, body) = post_create_room(&addr, Some("s3cret-token")).await;
+    assert_eq!(status, 200, "a matching X-Create-Token must be accepted");
+    assert!(body["room_code"].is_string(), "got {body}");
+}
+
+#[actix_web::test]
+async fn test_gated_create_room_rejects_a_wrong_token() {
+    let addr = spawn_server_gated(Some("s3cret-token")).await;
+    let (status, body) = post_create_room(&addr, Some("wrong-token")).await;
+    assert_eq!(status, 403, "a wrong X-Create-Token must be rejected");
+    assert!(
+        body["error"].is_string(),
+        "403 carries the standard HTTP error envelope; got {body}"
+    );
+}
+
+#[actix_web::test]
+async fn test_gated_create_room_rejects_a_missing_token() {
+    let addr = spawn_server_gated(Some("s3cret-token")).await;
+    let (status, _body) = post_create_room(&addr, None).await;
+    assert_eq!(
+        status, 403,
+        "an absent X-Create-Token must be rejected when the gate is on"
+    );
 }

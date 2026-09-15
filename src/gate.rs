@@ -20,6 +20,35 @@ pub fn create_token_from_env() -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
+/// The resolved creation gate, injected as shared application state.
+///
+/// Resolving the token once at startup keeps `std::env::var` out of the
+/// per-request path and, more importantly, makes the gate configurable in a
+/// test without `std::env::set_var` — which is `unsafe` under edition 2024 and
+/// races across concurrently running tests. `None` means the gate is off.
+#[derive(Debug, Clone, Default)]
+pub struct CreateToken(Option<String>);
+
+impl CreateToken {
+    /// Wrap an already-resolved token.
+    #[must_use]
+    pub const fn new(token: Option<String>) -> Self {
+        Self(token)
+    }
+
+    /// Resolve the gate from the environment. Call this once, at startup.
+    #[must_use]
+    pub fn from_env() -> Self {
+        Self(create_token_from_env())
+    }
+
+    /// The token a request must present, or `None` when the gate is off.
+    #[must_use]
+    pub fn expected(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
 /// Whether a room-creation request may proceed.
 ///
 /// `expected` of `None` or `Some("")` means the gate is disabled and everything
@@ -58,6 +87,20 @@ mod tests {
     #[test]
     fn wrong_token_is_rejected() {
         assert!(!create_allowed(Some("nope"), Some("s3cret")));
+    }
+
+    #[test]
+    fn create_token_wraps_and_exposes_the_expected_value() {
+        assert_eq!(CreateToken::new(None).expected(), None);
+        assert_eq!(
+            CreateToken::new(Some("s3cret".into())).expected(),
+            Some("s3cret")
+        );
+        assert_eq!(
+            CreateToken::default().expected(),
+            None,
+            "the default gate is off"
+        );
     }
 
     #[test]

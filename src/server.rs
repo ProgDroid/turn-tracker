@@ -32,8 +32,8 @@ pub struct CreateRoomRequest {
 /// POST /api/rooms — create a room, returning the code + host credentials.
 ///
 /// # Errors
-/// `AppError::CreateForbidden` if `TT_CREATE_TOKEN` is set and the
-/// `X-Create-Token` header does not match; `AppError::InvalidRequest` for an
+/// `AppError::CreateForbidden` if the injected [`gate::CreateToken`] is set and
+/// the `X-Create-Token` header does not match; `AppError::InvalidRequest` for an
 /// empty host name; `AppError::NameTooLong` if the name exceeds the length
 /// bound; `AppError::CodeExhausted` if no unique code is available;
 /// `AppError::RoomCapacityReached` if the server is full.
@@ -43,6 +43,7 @@ pub struct CreateRoomRequest {
 pub async fn create_room(
     req: actix_web::HttpRequest,
     registry: web::Data<Arc<Registry>>,
+    create_token: web::Data<gate::CreateToken>,
     body: web::Json<CreateRoomRequest>,
 ) -> Result<impl Responder, AppError> {
     // Runs after the rate limiter (wrapped on the resource), so guessing the
@@ -51,8 +52,7 @@ pub async fn create_room(
         .headers()
         .get("X-Create-Token")
         .and_then(|v| v.to_str().ok());
-    let expected = gate::create_token_from_env();
-    if !gate::create_allowed(provided, expected.as_deref()) {
+    if !gate::create_allowed(provided, create_token.expected()) {
         log::warn!("room creation rejected: missing or wrong create token");
         return Err(AppError::CreateForbidden);
     }
@@ -74,13 +74,17 @@ pub async fn create_room(
 ///
 /// Registry is injected as shared state. `governor` is the shared per-client
 /// rate-limit config applied to room creation; pass the SAME config into every
-/// worker so they share one set of buckets.
+/// worker so they share one set of buckets. `create_token` is the resolved
+/// creation gate (see [`gate::CreateToken`]), passed in rather than read from
+/// the environment per request.
 pub fn config(
     cfg: &mut web::ServiceConfig,
     registry: Arc<Registry>,
     governor: &GovernorConfig<RealIpKeyExtractor, NoOpMiddleware>,
+    create_token: gate::CreateToken,
 ) {
     cfg.app_data(web::Data::new(registry))
+        .app_data(web::Data::new(create_token))
         .route("/health", web::get().to(health))
         .service(
             web::resource("/api/rooms")
@@ -140,12 +144,15 @@ pub fn security_headers() -> DefaultHeaders {
 pub async fn run(registry: Arc<Registry>, bind: &str, static_dir: String) -> std::io::Result<()> {
     // Build the rate-limit config ONCE so every worker shares the same buckets.
     let governor = ratelimit::room_create_config();
+    // Resolve the creation gate ONCE, at startup, instead of on every request.
+    let create_token = gate::CreateToken::from_env();
     HttpServer::new(move || {
         let registry = registry.clone();
         let governor = governor.clone();
+        let create_token = create_token.clone();
         App::new()
             .wrap(security_headers())
-            .configure(|cfg| config(cfg, registry.clone(), &governor))
+            .configure(|cfg| config(cfg, registry.clone(), &governor, create_token.clone()))
             .service(spa_files(&static_dir))
     })
     .bind(bind)?
@@ -173,6 +180,7 @@ mod tests {
                 cfg,
                 Arc::new(Registry::new()),
                 &ratelimit::room_create_config(),
+                gate::CreateToken::default(),
             );
         }
     }
