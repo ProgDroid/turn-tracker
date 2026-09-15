@@ -13,13 +13,16 @@ use crate::domain::player::{self, NameError};
 use crate::registry::{Outbound, Registry};
 use crate::wire::{ClientMessage, PublicRoom, ServerMessage};
 use crate::ws::dispatch::dispatch;
+use crate::ws::heartbeat::{CLIENT_TIMEOUT, HEARTBEAT_INTERVAL, Heartbeat};
 use crate::ws::origin::{allowed_origins_from_env, origin_allowed};
 
 /// GET /ws/{code} — upgrade to a WebSocket bound to that room.
 ///
 /// # Errors
 /// Returns 404 if the room does not exist; otherwise upgrades the connection.
-#[allow(clippy::future_not_send)] // actix-web types (HttpRequest, Payload) are not Send; handler runs on actix's single-threaded runtime
+#[allow(clippy::future_not_send)]
+// actix-web types (HttpRequest, Payload) are not Send; handler runs on actix's single-threaded runtime
+#[allow(clippy::too_many_lines)]
 pub async fn ws_route(
     req: HttpRequest,
     stream: web::Payload,
@@ -54,6 +57,12 @@ pub async fn ws_route(
         log::info!("ws connected: room={code}");
         let mut session = session;
         let mut me: Option<PlayerId> = None;
+        let mut heartbeat = Heartbeat::new(CLIENT_TIMEOUT, Instant::now());
+        let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // `interval` yields immediately on its first tick; consume it so the
+        // first real ping happens one full interval from now.
+        ticker.tick().await;
 
         loop {
             tokio::select! {
@@ -68,6 +77,9 @@ pub async fn ws_route(
                         Some(Ok(actix_ws::Message::Close(_))) | None => break,
                         Some(Ok(actix_ws::Message::Ping(bytes))) => {
                             let _ = session.pong(&bytes).await;
+                        }
+                        Some(Ok(actix_ws::Message::Pong(_))) => {
+                            heartbeat.record_pong(Instant::now());
                         }
                         _ => {}
                     }
@@ -101,6 +113,15 @@ pub async fn ws_route(
                         }
                         // Channel closed (room swept/removed) — end the connection.
                         Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = ticker.tick() => {
+                    if heartbeat.is_stale(Instant::now()) {
+                        log::info!("ws heartbeat timeout: room={code}");
+                        break;
+                    }
+                    if session.ping(b"").await.is_err() {
+                        break;
                     }
                 }
             }
