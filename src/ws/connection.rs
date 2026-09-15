@@ -57,7 +57,6 @@ pub async fn ws_route(
 /// Run a WebSocket connection: handle liveness, dispatch, and cleanup.
 ///
 /// Manages the select loop over incoming messages, broadcast events, and heartbeat ticks.
-#[allow(clippy::too_many_lines)]
 async fn run_connection<S>(
     registry: Arc<Registry>,
     code: String,
