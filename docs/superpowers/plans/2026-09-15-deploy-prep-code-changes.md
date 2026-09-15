@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Toolchain is stable Rust (currently 1.95).** `std` has native file locking; do **not** add `fs4` or `fs2`.
+- **Toolchain is stable Rust (1.94.1 in this container).** `std` has had native file locking since 1.89; do **not** add `fs4` or `fs2`.
 - **Clippy runs with `all` + `pedantic` + `nursery` at warn, and CI uses `-D warnings`.** Every new public item needs a doc comment; every `async fn` with no internal await needs `#[allow(clippy::unused_async)]` if actix's signature forces it. Follow the existing `#[allow(...)]` comments in neighbouring code for the house style.
 - **`cargo fmt --all -- --check` must pass.**
 - **Frontend: vitest passing is NOT sufficient.** Run `npm run build` (which runs `vue-tsc`) before every frontend commit — the type check catches what vitest does not.
