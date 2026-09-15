@@ -8,7 +8,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::ids::{PlayerId, RoomCode};
-use crate::domain::player::Player;
+use crate::domain::player::{ConnEpoch, Player};
 use crate::domain::room::{Room, RoomState};
 
 /// Persisted room lifecycle state. Mirrors `RoomState` (kept serde-free).
@@ -19,9 +19,12 @@ pub enum SnapshotState {
     Active,
 }
 
-/// One persisted player. `token` IS persisted — it is the reconnection
-/// credential. `connected` is intentionally omitted: it is always `false`
-/// after a restart (no live sockets).
+/// One persisted player.
+///
+/// `token` IS persisted — it is the reconnection credential. `connected` is
+/// intentionally omitted: it is always `false` after a restart (no live
+/// sockets), and so is `conn_epoch`, which only identifies a live socket
+/// within one process lifetime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerSnapshot {
     pub id: PlayerId,
@@ -101,11 +104,13 @@ impl RoomSnapshot {
                     is_host: p.is_host,
                     connected: false,
                     skip_next: p.skip_next,
+                    conn_epoch: ConnEpoch::NONE,
                 })
                 .collect(),
             current_player_id: self.current_player_id,
             previous_player_id: self.previous_player_id,
             last_nudge_at: HashMap::new(),
+            next_conn_epoch: 1,
         }
     }
 }
@@ -181,6 +186,61 @@ mod tests {
         }"#;
         let snap: RoomSnapshot = serde_json::from_str(json).unwrap();
         assert!(!snap.locked, "missing locked must default to false");
+    }
+
+    #[test]
+    fn connection_epochs_are_not_persisted_and_reload_unowned() {
+        // `conn_epoch` is process-local liveness bookkeeping. It must not widen
+        // the on-disk format, and a reloaded player must own no connection.
+        let now = Instant::now();
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        let epoch = room.attach_connection(&host_id);
+        assert_ne!(epoch, ConnEpoch::NONE);
+
+        let json = serde_json::to_string(&RoomSnapshot::from(&room)).unwrap();
+        assert!(
+            !json.contains("epoch"),
+            "the snapshot format must not carry connection epochs: {json}"
+        );
+
+        let back: RoomSnapshot = serde_json::from_str(&json).unwrap();
+        let mut rebuilt = back.into_room();
+        assert_eq!(rebuilt.players[0].conn_epoch, ConnEpoch::NONE);
+        assert!(!rebuilt.players[0].connected);
+        assert!(
+            !rebuilt.detach_connection(&host_id, epoch),
+            "an epoch from before the restart must not own a reloaded player"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_written_before_the_epoch_change_still_loads() {
+        // Byte-for-byte a pre-change snapshot: no epoch keys anywhere.
+        let json = r#"{
+            "code": "ABC123",
+            "state": "active",
+            "locked": true,
+            "players": [
+                {
+                    "id": "p1",
+                    "name": "Host",
+                    "token": "tok1",
+                    "is_host": true,
+                    "skip_next": false
+                }
+            ],
+            "current_player_id": "p1",
+            "previous_player_id": null
+        }"#;
+        let snap: RoomSnapshot = serde_json::from_str(json).unwrap();
+        let mut room = snap.into_room();
+        assert_eq!(room.players.len(), 1);
+        assert_eq!(room.players[0].conn_epoch, ConnEpoch::NONE);
+        assert_eq!(
+            room.attach_connection(&PlayerId("p1".into())),
+            ConnEpoch(1),
+            "a reloaded room starts issuing epochs from 1"
+        );
     }
 
     #[test]

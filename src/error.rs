@@ -14,6 +14,8 @@ pub enum AppError {
     CodeExhausted,
     #[error("Server is at capacity; try again later")]
     RoomCapacityReached,
+    #[error("Hosting is invite-only during the beta")]
+    CreateForbidden,
 }
 
 impl ResponseError for AppError {
@@ -27,6 +29,7 @@ impl ResponseError for AppError {
             Self::InvalidRequest | Self::NameTooLong => StatusCode::BAD_REQUEST,
             Self::RoomNotFound => StatusCode::NOT_FOUND,
             Self::CodeExhausted | Self::RoomCapacityReached => StatusCode::SERVICE_UNAVAILABLE,
+            Self::CreateForbidden => StatusCode::FORBIDDEN,
         }
     }
 }

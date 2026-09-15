@@ -57,6 +57,9 @@ async fn main() -> std::io::Result<()> {
             "ALLOWED_ORIGINS is unset/empty: WebSocket Origin checking is DISABLED (all origins allowed)"
         );
     }
+    if turn_tracker::gate::create_token_from_env().is_none() {
+        log::info!("TT_CREATE_TOKEN is unset: room creation is OPEN to anyone");
+    }
     log::info!("turn-tracker listening on {bind}");
 
     // Runs until SIGTERM/SIGINT; Actix drains connections before returning.

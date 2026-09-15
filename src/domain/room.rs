@@ -10,7 +10,7 @@ pub const NUDGE_COOLDOWN: Duration = Duration::from_secs(10);
 pub const MAX_PLAYERS: usize = 16;
 
 use crate::domain::ids::{PlayerId, RoomCode, generate_token};
-use crate::domain::player::Player;
+use crate::domain::player::{ConnEpoch, Player};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoomState {
@@ -43,6 +43,10 @@ pub struct Room {
     pub current_player_id: Option<PlayerId>,
     pub previous_player_id: Option<PlayerId>,
     pub last_nudge_at: std::collections::HashMap<PlayerId, Instant>,
+    /// Hands out the next [`ConnEpoch`]. Starts at 1 so [`ConnEpoch::NONE`] is
+    /// never issued. Process-local; deliberately NOT persisted, because every
+    /// player is disconnected after a reload so no epoch can still be owned.
+    pub next_conn_epoch: u64,
 }
 
 impl Room {
@@ -63,6 +67,7 @@ impl Room {
             current_player_id: None,
             previous_player_id: None,
             last_nudge_at: std::collections::HashMap::new(),
+            next_conn_epoch: 1,
         };
         (room, host_id, token)
     }
@@ -92,6 +97,45 @@ impl Room {
     #[must_use]
     pub fn is_host(&self, id: &PlayerId) -> bool {
         self.players.iter().any(|p| &p.id == id && p.is_host)
+    }
+
+    /// Attach a live connection to `id`: mark the player connected and return
+    /// the epoch identifying this connection as the player's current owner.
+    ///
+    /// A later attach supersedes an earlier one. Nothing prevents two live
+    /// sockets for the same token (a half-open connection the server has not
+    /// noticed yet, plus the phone that already reconnected), so ownership is
+    /// what [`Self::detach_connection`] tests before clearing `connected`.
+    ///
+    /// The epoch is burned even when `id` is unknown, so a stale caller can
+    /// never be handed an epoch that matches some other player.
+    pub fn attach_connection(&mut self, id: &PlayerId) -> ConnEpoch {
+        let epoch = ConnEpoch(self.next_conn_epoch);
+        self.next_conn_epoch += 1;
+        if let Some(p) = self.players.iter_mut().find(|p| &p.id == id) {
+            p.connected = true;
+            p.conn_epoch = epoch;
+        }
+        epoch
+    }
+
+    /// Detach a departing connection: clear `connected` only if `epoch` is
+    /// still the player's owner.
+    ///
+    /// Returns true if the flag was actually cleared — false means a newer
+    /// connection has taken over and the caller is a ghost whose departure
+    /// must change nothing (and must not be broadcast).
+    pub fn detach_connection(&mut self, id: &PlayerId, epoch: ConnEpoch) -> bool {
+        self.players
+            .iter_mut()
+            .find(|p| &p.id == id)
+            .is_some_and(|p| {
+                let owns = p.conn_epoch == epoch;
+                if owns {
+                    p.connected = false;
+                }
+                owns
+            })
     }
 
     /// Transition Lobby -> Active. Host-only. The first player in order becomes current.
@@ -490,6 +534,64 @@ mod tests {
         room.add_player("Bob".into(), t0());
         let host_idx = room.players.iter().position(|p| p.id == host_id).unwrap();
         assert_eq!(room.advance_from(1), Some(host_idx));
+    }
+
+    // --- connection ownership (per-connection epoch) ---
+
+    #[test]
+    fn test_attach_connection_marks_connected_and_issues_a_fresh_epoch() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        room.players[0].connected = false;
+        let first = room.attach_connection(&host_id);
+        assert!(room.players[0].connected);
+        assert_ne!(first, ConnEpoch::NONE, "NONE must never be issued");
+        let second = room.attach_connection(&host_id);
+        assert_ne!(first, second, "each attach gets a distinct epoch");
+    }
+
+    #[test]
+    fn test_detach_by_the_owning_connection_clears_connected() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let epoch = room.attach_connection(&host_id);
+        assert!(room.detach_connection(&host_id, epoch));
+        assert!(!room.players[0].connected);
+    }
+
+    #[test]
+    fn test_detach_by_a_superseded_connection_leaves_the_player_connected() {
+        // The exact heartbeat race: connection A is half-open, the player
+        // re-attaches on connection B, then A's cleanup finally fires.
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let conn_a = room.attach_connection(&host_id);
+        let conn_b = room.attach_connection(&host_id);
+        assert!(
+            !room.detach_connection(&host_id, conn_a),
+            "a superseded connection must report that it changed nothing"
+        );
+        assert!(
+            room.players[0].connected,
+            "the live connection B still owns the player"
+        );
+        assert!(room.detach_connection(&host_id, conn_b));
+        assert!(!room.players[0].connected);
+    }
+
+    #[test]
+    fn test_detach_of_an_unknown_player_is_a_no_op() {
+        let (mut room, host_id, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let epoch = room.attach_connection(&host_id);
+        assert!(!room.detach_connection(&PlayerId("ghost".into()), epoch));
+    }
+
+    #[test]
+    fn test_a_never_attached_player_cannot_be_detached_by_a_live_epoch() {
+        let (mut room, _h, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _bt) = room.add_player("Bob".into(), t0());
+        let host_epoch = room.attach_connection(&room.players[0].id.clone());
+        assert!(
+            !room.detach_connection(&bob, host_epoch),
+            "Bob carries ConnEpoch::NONE and matches no issued epoch"
+        );
     }
 
     // --- Task 7: end_turn + claim_turn ---

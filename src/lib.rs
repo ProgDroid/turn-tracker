@@ -1,6 +1,7 @@
 pub mod cleanup;
 pub mod domain;
 pub mod error;
+pub mod gate;
 pub mod persist;
 pub mod ratelimit;
 pub mod registry;
