@@ -158,3 +158,38 @@ async fn test_locked_room_rejects_new_joiner_but_allows_token_rejoin() {
     assert_eq!(err["type"], "error");
     assert_eq!(err["code"], "room_locked");
 }
+
+#[actix_web::test]
+async fn test_join_with_unknown_token_is_rejected() {
+    let addr = spawn_server().await;
+    let client = awc::Client::new();
+    let mut resp = client
+        .post(format!("http://{addr}/api/rooms"))
+        .send_json(&serde_json::json!({ "host_name": "Host" }))
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let code = body["room_code"].as_str().unwrap().to_owned();
+
+    // Plain-text WebSocket is intentional: loopback-only ephemeral-port test.
+    let ws_url = format!("{}://{addr}/ws/{code}", "ws");
+    let (_resp, mut conn) = awc::Client::new().ws(ws_url).connect().await.unwrap();
+
+    // A token the room has never issued — e.g. a client returning after the
+    // snapshot was restored from an older backup.
+    let join = serde_json::json!({ "type": "join", "player_token": "not-a-real-token" });
+    conn.send(awc::ws::Message::Text(join.to_string().into()))
+        .await
+        .unwrap();
+
+    let frame = conn.next().await.unwrap().unwrap();
+    let awc::ws::Frame::Text(bytes) = frame else {
+        panic!("expected a text frame");
+    };
+    let msg: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(msg["type"], "error", "unknown token must not mint a player; got {msg}");
+    assert_eq!(
+        msg["code"], "not_found",
+        "must use the code the frontend's stale-token recovery listens for"
+    );
+}

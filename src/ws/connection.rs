@@ -188,6 +188,7 @@ async fn handle_text(
 
 /// Resolve a join: re-attach via token, or create a new player.
 #[allow(clippy::result_unit_err)] // unit error is an intentional "just terminate" signal
+#[allow(clippy::too_many_lines)]
 async fn handle_join(
     registry: &Arc<Registry>,
     code: &str,
@@ -235,6 +236,11 @@ async fn handle_join(
             // Always send Welcome on (re-)join so the client can set `me`.
             // Reconnection by token bypasses the lock — a dropped player returns.
             JoinOutcome::Joined(id, token, true)
+        } else if is_rejoin {
+            // A token was supplied but matched nothing. Minting a player here
+            // would create an empty-named ghost (the name is blank for rejoins),
+            // so reject and let the client clear its stale token.
+            JoinOutcome::UnknownToken
         } else if room.locked {
             JoinOutcome::RoomLocked
         } else if room.is_full() {
@@ -248,7 +254,9 @@ async fn handle_join(
             JoinOutcome::Joined(..) => vec![Outbound::All(ServerMessage::RoomState {
                 room: PublicRoom::from(&*room),
             })],
-            JoinOutcome::RoomFull | JoinOutcome::RoomLocked => Vec::new(),
+            JoinOutcome::RoomFull | JoinOutcome::RoomLocked | JoinOutcome::UnknownToken => {
+                Vec::new()
+            }
         };
         // Only a brand-new player changes persisted state. A rejoin just flips
         // `connected` (not snapshotted); a full room changes nothing.
@@ -298,6 +306,18 @@ async fn handle_join(
             .await;
             Ok(())
         }
+        Ok(JoinOutcome::UnknownToken) => {
+            log::info!("ws join rejected: room={code} unknown player token");
+            let _ = forward(
+                session,
+                &ServerMessage::Error {
+                    code: "not_found".into(),
+                    message: "Room not found".into(),
+                },
+            )
+            .await;
+            Ok(())
+        }
         Err(_) => Err(()),
     }
 }
@@ -308,6 +328,8 @@ enum JoinOutcome {
     Joined(PlayerId, String, bool),
     RoomFull,
     RoomLocked,
+    /// A non-empty token was supplied but matched no player in the room.
+    UnknownToken,
 }
 
 #[allow(clippy::result_unit_err)] // unit error is an intentional "just terminate" signal
