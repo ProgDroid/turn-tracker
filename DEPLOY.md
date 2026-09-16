@@ -12,6 +12,7 @@ The server is a single static binary that serves the SPA over plain HTTP on
 | `ALLOWED_ORIGINS` | _(unset)_ | Comma-separated WebSocket `Origin` allowlist. **Must be set in production** (see below). |
 | `TT_SNAPSHOT_PATH` | `./data/rooms.json` | Room-state snapshot file. Point at a mounted volume so it survives container recreation. |
 | `TT_SNAPSHOT_INTERVAL_SECS` | `60` | Periodic snapshot interval. A snapshot is written only when state changed. |
+| `TT_CLIENT_IP_HEADER` | _(unset)_ | Header the app may trust for the per-IP rate limit. Set to `Fly-Client-IP` on Fly. Leave UNSET behind a reverse proxy that overwrites `X-Forwarded-For`. |
 | `TT_CREATE_TOKEN` | _(unset)_ | Shared secret required in the `X-Create-Token` header on `POST /api/rooms`. Unset = room creation is open to anyone. |
 
 ## Operational requirements
@@ -26,7 +27,20 @@ If `ALLOWED_ORIGINS` is unset/empty, WebSocket Origin checking is **disabled**
 origin(s), e.g. `ALLOWED_ORIGINS=https://turns.example.com`. The server logs a
 warning at startup when it is unset.
 
-### 2. Reverse proxy must OVERWRITE `X-Forwarded-For`, and the container must not be exposed directly
+### 2. The client-IP source must match the platform
+
+**On Fly, set `TT_CLIENT_IP_HEADER=Fly-Client-IP` and skip the rest of this
+section.** Fly sets that header from the real TCP connection and strips any
+client-supplied value, so it is authoritative. `X-Forwarded-For` is *not*
+trustworthy on Fly — a client can spoof it. There is no reverse proxy of yours
+to configure.
+
+The remainder of this section applies to the **reverse-proxy deploy**
+(`deploy/vps/`), where `TT_CLIENT_IP_HEADER` must stay UNSET. Setting it there
+would be a hole in the other direction: a client could send `Fly-Client-IP`,
+the proxy would forward it untouched, and the app would trust it.
+
+#### Reverse proxy must OVERWRITE `X-Forwarded-For`, and the container must not be exposed directly
 
 Room creation (`POST /api/rooms`) is rate-limited **per client IP**. Because the
 app sits behind a proxy, it reads the client IP from `X-Forwarded-For` /
