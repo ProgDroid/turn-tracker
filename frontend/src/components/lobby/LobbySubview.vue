@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoomStore } from '@/stores/room'
 import ShareCodeBlock from './ShareCodeBlock.vue'
 import PlayerRow from '@/components/player/PlayerRow.vue'
+import SupportLink from '@/components/ui/SupportLink.vue'
 import DraggablePlayerList from '@/components/player/DraggablePlayerList.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 
@@ -58,6 +59,8 @@ const hostName = computed(() => store.room?.players.find((p) => p.is_host)?.name
         />
       </div>
     </template>
+
+    <SupportLink />
   </section>
 </template>
 
