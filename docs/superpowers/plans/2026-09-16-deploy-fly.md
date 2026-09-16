@@ -51,6 +51,22 @@ curl -L https://fly.io/install.sh | sh
 flyctl auth login
 ```
 
+**If `flyctl auth login` fails with "connection refused"** — which it does on
+Termux/Android, because flyctl opens a loopback listener for the OAuth redirect
+that the browser cannot reach — authenticate with an environment variable
+instead. It is the same mechanism the CI job uses, so it is well-travelled:
+
+```bash
+# Create a token at https://fly.io/user/personal_access_tokens
+export FLY_API_TOKEN="<token>"
+flyctl auth whoami          # should print your email
+```
+
+There is no `flyctl auth token` subcommand; the env var is the supported path.
+Persist it in your shell profile if you want it across sessions, and `chmod 600`
+that profile since it now holds a credential. Use a PERSONAL token here — the
+deploy-scoped token from Task 3 is narrower and belongs only in CI.
+
 - [ ] **Step 2: Create the app WITHOUT letting flyctl rewrite fly.toml**
 
 `fly.toml` is already written and carries decisions that matter (single Machine, `kill_timeout`, the trusted header). `flyctl launch` will offer to regenerate it — decline.
