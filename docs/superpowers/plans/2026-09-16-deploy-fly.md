@@ -23,6 +23,20 @@
 - **`kill_timeout = "30s"` must stay top-level in `fly.toml`.** Placed after a table header, TOML silently nests it and it has no effect — the app would be killed mid-drain at Fly's 5s default and lose the final snapshot.
 - **Actions logs on a public repository are world-readable.** Secret values are masked, but `set -x` or an echoed interpolation leaks. No shell tracing in the deploy job.
 - **Never commit a filled-in `.env`.** `.gitignore` matches `.env` at any depth.
+- **Supply chain: the deploy job is pinned; the rest are not, deliberately.**
+  Only `deploy` carries a secret (`FLY_API_TOKEN`), so it is the only job where
+  a compromised action gains something worth stealing — its `setup-flyctl` ref
+  must be an immutable SHA and the workflow refuses to run until it is.
+  The other jobs still use mutable refs, including the branch ref
+  `dtolnay/rust-toolchain@stable` and tags like `Swatinem/rust-cache@v2`. That
+  is a **knowingly accepted residual**, not an oversight. Those jobs hold no
+  secrets and run with `contents: read`, so the realistic attack is tampering
+  with test results to turn CI green and let a bad commit through to `deploy` —
+  indirect, and it still cannot reach the token. Pinning all six to SHAs is the
+  correct end state; do it via Dependabot for `github-actions`, which bumps
+  pinned SHAs through reviewable PRs. Hand-pinning them now would mean six
+  unresolvable placeholders in a file you have to apply by hand, which trades a
+  small risk for a large chance of the workflow never being applied at all.
 
 ---
 
@@ -153,7 +167,29 @@ flyctl tokens create deploy
 
 Add the output as repository secret `FLY_API_TOKEN` (Settings → Secrets and variables → Actions). A deploy-scoped token is narrower than a personal one — use it.
 
-- [ ] **Step 2: Apply the workflow**
+- [ ] **Step 2: Pin the flyctl action — the workflow fails until you do**
+
+`deploy/fly/ci.yml` ships with `superfly/flyctl-actions/setup-flyctl@PIN_ME_SEE_HEADER`,
+which is deliberately unresolvable. A mutable ref (`@master`, or even a tag)
+resolves at deploy time, so any future compromise of that ref would execute
+inside the one job carrying `FLY_API_TOKEN` — full deploy access to the app.
+Step-scoping the secret does not help: a malicious setup step can plant a
+`flyctl` binary that exfiltrates the token when the next step runs.
+
+```bash
+git ls-remote https://github.com/superfly/flyctl-actions HEAD
+```
+
+Substitute that 40-character SHA, keeping the version as a trailing comment:
+
+```yaml
+- uses: superfly/flyctl-actions/setup-flyctl@<sha>  # v1.5
+```
+
+Worth doing once while you are here: enable Dependabot for `github-actions`
+so pinned SHAs get PR-based updates rather than silently rotting.
+
+- [ ] **Step 3: Apply the workflow**
 
 The intended file is committed at `deploy/fly/ci.yml`. It is not live, because GitHub refuses a workflow push from this session: *"refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope."*
 
@@ -168,11 +204,11 @@ git push
 
 Then delete `deploy/fly/ci.yml`, or keep it deliberately in step — a stale duplicate is worse than none.
 
-- [ ] **Step 3: Watch the first automated run**
+- [ ] **Step 4: Watch the first automated run**
 
 Actions → the run for that push. Expect `test`, `frontend`, `docker`, then `deploy`.
 
-- [ ] **Step 4: Confirm CI actually deployed, rather than reporting success**
+- [ ] **Step 5: Confirm CI actually deployed, rather than reporting success**
 
 ```bash
 flyctl status
