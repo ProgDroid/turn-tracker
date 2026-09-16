@@ -11,6 +11,7 @@ reliability or anything else.
 | Host maintenance | none | yours: OS patching, Docker, ufw, SSH |
 | Client IP source | `Fly-Client-IP` | `X-Forwarded-For`, overwritten by Caddy |
 | Deploy | `flyctl deploy` | build → GHCR → SSH → `docker compose up -d` |
+| CI workflow | `deploy/fly/ci.yml` (copy into `.github/workflows/`) | see the superseded VPS plan |
 | Cost (Sept 2026) | ~$2.20/mo | provider-dependent |
 
 Both run the **same `Dockerfile`** and the same binary. Only the surrounding

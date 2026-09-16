@@ -1,5 +1,16 @@
 # Deploy Infrastructure Implementation Plan
 
+> **SUPERSEDED (2026-09-16) by `docs/superpowers/plans/2026-09-16-deploy-fly.md`.**
+> Hetzner's ARM line became unavailable and its remaining plans roughly tripled
+> in price, so the live target is now Fly. This plan is kept, not deleted: the
+> VPS config it describes is preserved and working under `deploy/vps/`, and
+> `deploy/README.md` documents swapping back to it. Read the Fly plan first;
+> read this one only if you are switching.
+>
+> One setting differs and getting it wrong is a security hole in either
+> direction: `TT_CLIENT_IP_HEADER` must be **unset** on this VPS path, and
+> **`Fly-Client-IP`** on Fly.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to work through this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Most of this plan cannot be executed by an agent.** It provisions a machine that does not exist yet, handles SSH keys and secrets, and modifies `.github/workflows/`, which the default `GITHUB_TOKEN` is not permitted to write. Tasks 3 and 5's file authoring are agent-executable; everything else is a human runbook.
