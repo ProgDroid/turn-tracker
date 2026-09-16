@@ -1,0 +1,115 @@
+# ============================================================================
+# INTENDED CONTENT OF .github/workflows/ci.yml
+#
+# This is NOT live. It sits here because an agent session cannot push files
+# under .github/workflows/ — GitHub rejects it:
+#   "refusing to allow an OAuth App to create or update workflow ...
+#    without `workflow` scope"
+#
+# To apply, from a clone with your own credentials:
+#     cp deploy/fly/ci.yml .github/workflows/ci.yml
+#     git add .github/workflows/ci.yml && git commit && git push
+#
+# Prerequisite: repo secret FLY_API_TOKEN, from `flyctl tokens create deploy`.
+# Keep this copy in step with the live file, or delete it once applied.
+# ============================================================================
+
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      # Fly builds the real image on its own remote builder, so nothing is
+      # pushed from here. This job exists to fail a PR fast when the Dockerfile
+      # breaks, rather than discovering it during a deploy.
+      - name: Build image (validate Dockerfile, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: turn-tracker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test, frontend, docker]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    concurrency:
+      # Never let two deploys overlap. This app is single-instance by design and
+      # a second in-flight release can only make that worse.
+      group: fly-deploy
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://whosego.app
+    steps:
+      - uses: actions/checkout@v6
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # --strategy immediate is REQUIRED, not a speed tweak. The default
+      # rolling/bluegreen strategies want a second Machine, and on Fly each
+      # Machine gets its own volume — two Machines would serve two DIFFERENT
+      # sets of rooms under the same codes. `immediate` stops the old Machine
+      # before starting the new one, which is also what the app's exclusive
+      # data-directory lock requires.
+      #
+      # No `set -x` anywhere in this job: Actions logs on a public repository
+      # are world-readable.
+      - name: Deploy to Fly
+        run: flyctl deploy --remote-only --strategy immediate
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      # flyctl already waits on Fly's own health checks. This verifies the
+      # PUBLIC path — DNS, certificate and routing — which those do not cover.
+      - name: Verify the public endpoint
+        run: |
+          for i in $(seq 1 12); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' https://whosego.app/health || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy after $((i * 5))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "health check never returned 200 within 60s"
+          exit 1
