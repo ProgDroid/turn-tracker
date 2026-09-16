@@ -138,7 +138,19 @@ flyctl certs show whosego.app
 
 It prints the DNS records it wants. Add them in Cloudflare as **DNS-only (grey cloud)**: an `A` to Fly's shared IPv4 and an `AAAA` to the app's IPv6, plus any ownership record shown.
 
-Orange cloud would put a second proxy in front of Fly, breaking certificate validation and — more quietly — making `Fly-Client-IP` reflect Cloudflare rather than the visitor.
+**Cloudflare defaults new A/AAAA records to PROXIED.** Grey cloud is an active click, not the default — assume you have to change it.
+
+Orange cloud would put a second proxy in front of Fly, breaking certificate validation and — more quietly — making `Fly-Client-IP` reflect Cloudflare rather than the visitor, which would put every user in one rate-limit bucket and remove the throttle that makes guessing `TT_CREATE_TOKEN` impractical.
+
+**Symptom if you get this wrong: HTTP 525** ("SSL handshake failed") from Cloudflare. It is self-diagnosing — a Cloudflare error code proves Cloudflare is in the path, so the record is still proxied. The failure is circular and will not clear on its own: Fly cannot complete ACME validation because Cloudflare intercepts it, so no certificate is ever issued for Cloudflare to hand off to.
+
+Verify the record is genuinely DNS-only, via DNS rather than a browser:
+
+```bash
+curl -sS "https://dns.google/resolve?name=whosego.app&type=A"
+```
+
+Expect Fly's address from `flyctl ips list`. A `104.x` or `172.67.x` answer is Cloudflare, meaning the proxy is still on.
 
 - [ ] **Step 5: Wait for issuance, then verify the public path**
 
