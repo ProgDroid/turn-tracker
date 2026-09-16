@@ -42,6 +42,38 @@ Turn Tracker: a no-install, Jackbox-style web app for tracking whose turn it is 
 - **QR button toggles label** Show QR ⇄ Hide QR (new `lobby.hideQr`).
 - Also spotted a separate **unfixed** latent backend bug → [[turn-tracker-stale-token-ghost]].
 
-⏳ **Deploy/CD is the actual blocker for the live E2E test (NOT yet done).** CI's `docker` job is `push:false` (validate only) — nothing ships to the Hetzner VPS and there's no HTTPS/wss termination. The E2E test needs the app deployed + reachable from phones over wss. Planned-not-executed because it needs the user's repo secrets (registry/SSH). With durability + this hardening round now done, **deploy/CD + the live wss E2E are the sole remaining workstreams** (and `DEPLOY.md` is the runbook for the deploy).
+✅ **DEPLOYED AND LIVE (2026-09-16) at https://whosego.app — the deploy/CD and
+live-wss workstreams are DONE.** Runs on **Fly.io**, not Hetzner (see
+[[user-profile]] — the old "ships to a Hetzner CAX11" note was wrong and cost a
+design cycle): one Machine in `lhr`, `shared-cpu-1x`/256mb, a 1 GB volume at
+`/data`, ~$2.20/mo. Config is `fly.toml` at the repo root. CD is
+`.github/workflows/ci.yml` — test/frontend/docker then `flyctl deploy
+--remote-only --strategy immediate`, gated to pushes on `main`.
 
-**Why / How to apply:** backend deferrals (Web Push, host role-passing, away toggle, NFC) live in the backend spec/plan — read those rather than restating. When resuming frontend work, the E2E suite (`frontend/tests/e2e/`) is the fastest way to validate multi-player flows against the real backend. See [[user-profile]], [[semgrep-ws-hook]], [[frontend-test-localstorage-shim]], [[frontend-build-gate]].
+**Fly invariants that are correctness requirements, not preferences:** exactly
+ONE Machine (each gets its own volume, so two would serve different rooms under
+the same codes — hence `--strategy immediate`, `auto_stop_machines = false`,
+`min_machines_running = 1`); `kill_timeout = "30s"` must stay TOP-LEVEL in the
+TOML or it silently nests and the app is killed mid-drain, losing the final
+snapshot; `TT_CLIENT_IP_HEADER=Fly-Client-IP` because X-Forwarded-For is
+client-spoofable on Fly — unset it if ever moving to the VPS path, where Caddy
+overwrites XFF and trusting a platform header would be the same hole reversed.
+
+**The VPS path is preserved, not deleted** — `deploy/vps/` plus
+`deploy/README.md` document swapping back. Same Dockerfile and binary; only
+infrastructure differs.
+
+**Shipped in the pre-deploy round (2026-09-16):** unknown-token rejection,
+server-initiated WebSocket heartbeat (30s ping, closes at 90-120s), the
+`TT_CREATE_TOKEN` closed-beta gate on room creation only (joining is never
+gated), the SPA `?k=` token capture, and a Critical connection-ownership fix —
+see [[turn-tracker-ws-connection-invariants]] before touching
+`src/ws/connection.rs`. Suite: 114 lib + 1 persistence + 12 integration + 89
+frontend.
+
+**Remaining:** the live phone tests (Task 4 of
+`docs/superpowers/plans/2026-09-16-deploy-fly.md`) — specifically the 5-minute
+backgrounding test for the heartbeat and the aeroplane-mode reconnect test for
+the epoch fix, both needing two phones on mobile data with wifi OFF. Then
+`flyctl secrets unset TT_CREATE_TOKEN` to open it to everyone.
+
