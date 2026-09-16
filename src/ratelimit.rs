@@ -27,14 +27,54 @@ const ROOM_CREATE_BURST: u32 = 10;
 /// Falls back to a single shared `"unknown"` bucket when no address can be
 /// determined, so an un-attributable request is still rate-limited rather than
 /// erroring or bypassing the limiter.
-#[derive(Debug, Clone, Copy)]
-pub struct RealIpKeyExtractor;
+#[derive(Debug, Clone)]
+pub struct RealIpKeyExtractor {
+    /// Name of a header the platform guarantees is unforgeable, e.g.
+    /// `Fly-Client-IP`. `None` means fall back to `realip_remote_addr()`.
+    trusted_header: Option<String>,
+}
+
+impl RealIpKeyExtractor {
+    /// Build an extractor.
+    ///
+    /// Pass `Some(name)` ONLY where the platform sets that header from the real
+    /// connection and strips any client-supplied value. Passing a header the
+    /// platform does not control hands clients the keying value — behind a
+    /// generic reverse proxy, an unknown header is forwarded verbatim.
+    #[must_use]
+    pub const fn new(trusted_header: Option<String>) -> Self {
+        Self { trusted_header }
+    }
+
+    /// Read the trusted-header name from `TT_CLIENT_IP_HEADER`, treating unset
+    /// or empty as "not configured" — the same degrade-to-default shape as
+    /// `ALLOWED_ORIGINS` and `TT_CREATE_TOKEN`.
+    #[must_use]
+    pub fn from_env() -> Self {
+        Self::new(
+            std::env::var("TT_CLIENT_IP_HEADER")
+                .ok()
+                .filter(|h| !h.is_empty()),
+        )
+    }
+}
 
 impl KeyExtractor for RealIpKeyExtractor {
     type Key = String;
     type KeyExtractionError = SimpleKeyExtractionError<&'static str>;
 
     fn extract(&self, req: &ServiceRequest) -> Result<Self::Key, Self::KeyExtractionError> {
+        // When a trusted header is configured it is the ONLY source. Falling
+        // back to XFF when it is absent would reopen the spoofing hole this
+        // exists to close, so an absent value fails closed into the shared
+        // "unknown" bucket instead.
+        if let Some(name) = &self.trusted_header {
+            return Ok(req
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map_or_else(|| "unknown".to_owned(), str::to_owned));
+        }
         let info = req.connection_info();
         Ok(info.realip_remote_addr().unwrap_or("unknown").to_owned())
     }
@@ -52,7 +92,7 @@ pub fn room_create_config() -> GovernorConfig<RealIpKeyExtractor, NoOpMiddleware
     GovernorConfigBuilder::default()
         .requests_per_minute(ROOM_CREATE_PER_MINUTE)
         .burst_size(ROOM_CREATE_BURST)
-        .key_extractor(RealIpKeyExtractor)
+        .key_extractor(RealIpKeyExtractor::from_env())
         .finish()
         .expect("non-zero rate-limit params yield a valid governor config")
 }
@@ -61,6 +101,81 @@ pub fn room_create_config() -> GovernorConfig<RealIpKeyExtractor, NoOpMiddleware
 mod tests {
     use super::*;
     use actix_web::test::TestRequest;
+
+    #[test]
+    fn trusted_header_is_preferred_when_configured() {
+        // On Fly the platform sets Fly-Client-IP from the real TCP connection
+        // and strips any client-supplied value, so it is authoritative there.
+        let req = TestRequest::default()
+            .insert_header(("fly-client-ip", "203.0.113.7"))
+            .insert_header(("x-forwarded-for", "198.51.100.1"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor::new(Some("fly-client-ip".into()))
+            .extract(&req)
+            .unwrap();
+        assert_eq!(
+            key, "203.0.113.7",
+            "the configured trusted header must win over XFF"
+        );
+    }
+
+    #[test]
+    fn a_spoofed_xff_cannot_override_the_trusted_header() {
+        // The whole point: on Fly, XFF is client-spoofable. A client rotating
+        // it must not be able to pick its own rate-limit bucket.
+        let req = TestRequest::default()
+            .insert_header(("fly-client-ip", "203.0.113.7"))
+            .insert_header(("x-forwarded-for", "1.2.3.4, 5.6.7.8"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor::new(Some("fly-client-ip".into()))
+            .extract(&req)
+            .unwrap();
+        assert_eq!(key, "203.0.113.7");
+    }
+
+    #[test]
+    fn a_configured_header_that_is_absent_falls_back_to_the_shared_bucket() {
+        // Fail CLOSED. If the trusted header is configured but missing, the
+        // request is un-attributable — bucket it with every other
+        // un-attributable request rather than trusting a spoofable XFF.
+        let req = TestRequest::default()
+            .insert_header(("x-forwarded-for", "1.2.3.4"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor::new(Some("fly-client-ip".into()))
+            .extract(&req)
+            .unwrap();
+        assert_eq!(
+            key, "unknown",
+            "a missing trusted header must NOT silently fall back to spoofable XFF"
+        );
+    }
+
+    #[test]
+    fn unconfigured_extractor_keeps_the_reverse_proxy_xff_behaviour() {
+        // The VPS path: Caddy is configured to OVERWRITE XFF, so the leftmost
+        // entry is trustworthy there. Unset = today's behaviour, unchanged.
+        let req = TestRequest::default()
+            .insert_header(("x-forwarded-for", "203.0.113.7, 70.41.3.18"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor::new(None).extract(&req).unwrap();
+        assert_eq!(key, "203.0.113.7");
+    }
+
+    #[test]
+    fn unconfigured_extractor_ignores_a_client_supplied_platform_header() {
+        // Guards the trap this design exists to avoid: behind Caddy, a client
+        // can send Fly-Client-IP and the proxy passes it straight through.
+        // Without explicit configuration it must be ignored entirely.
+        let req = TestRequest::default()
+            .insert_header(("fly-client-ip", "6.6.6.6"))
+            .insert_header(("x-forwarded-for", "203.0.113.7"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor::new(None).extract(&req).unwrap();
+        assert_eq!(
+            key, "203.0.113.7",
+            "an unconfigured platform header must never be trusted"
+        );
+    }
 
     #[test]
     fn config_builds() {
@@ -73,7 +188,7 @@ mod tests {
         let req = TestRequest::default()
             .insert_header(("x-forwarded-for", "203.0.113.7, 70.41.3.18"))
             .to_srv_request();
-        let key = RealIpKeyExtractor.extract(&req).unwrap();
+        let key = RealIpKeyExtractor::new(None).extract(&req).unwrap();
         assert_eq!(
             key, "203.0.113.7",
             "must key on the leftmost (client) XFF entry"
@@ -83,7 +198,7 @@ mod tests {
     #[test]
     fn extractor_falls_back_to_shared_key_when_unattributable() {
         let req = TestRequest::default().to_srv_request();
-        let key = RealIpKeyExtractor.extract(&req).unwrap();
+        let key = RealIpKeyExtractor::new(None).extract(&req).unwrap();
         assert_eq!(key, "unknown");
     }
 }

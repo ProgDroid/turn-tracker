@@ -1,0 +1,70 @@
+# Fly.io config for turn-tracker.
+#
+# This app is deliberately SINGLE-INSTANCE: it takes an exclusive OS lock on its
+# data directory, and on Fly each Machine gets its own volume. A second Machine
+# would not merely fail the lock — it would serve a DIFFERENT set of rooms, so
+# two players with the same code could land in two separate games.
+# Never scale this app past one Machine.
+
+app = "whosego"
+primary_region = "lhr"
+
+# The server drains for up to 5s on SIGTERM and only THEN writes its final
+# snapshot. Fly's default kill_timeout of 5s would kill it mid-drain and lose up
+# to one snapshot interval of room state. This is the same hazard as Compose's
+# 10s stop_grace_period on the VPS path.
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  BIND_ADDR = "0.0.0.0:8080"
+  STATIC_DIR = "/home/app/static"
+  ALLOWED_ORIGINS = "https://whosego.app"
+  TT_SNAPSHOT_PATH = "/data/rooms.json"
+  TT_SNAPSHOT_INTERVAL_SECS = "60"
+  # Fly sets Fly-Client-IP from the real TCP connection and strips any
+  # client-supplied value, so it is authoritative here. X-Forwarded-For is NOT:
+  # a client can spoof it on Fly and pick its own rate-limit bucket.
+  # Leave this UNSET on a reverse-proxy deploy (see deploy/vps/), where Caddy
+  # overwrites X-Forwarded-For and no platform header exists.
+  TT_CLIENT_IP_HEADER = "Fly-Client-IP"
+
+# TT_CREATE_TOKEN is a secret, not config:
+#   flyctl secrets set TT_CREATE_TOKEN=$(openssl rand -hex 16)
+
+[[mounts]]
+  source = "tt_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Both false/1 on purpose. auto_stop would kill long-lived WebSockets and add
+  # a cold start to the first join of a session; auto_start with more than one
+  # Machine would split rooms across volumes.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    # Connection-based, because this app's load is long-lived WebSockets rather
+    # than short requests. The limit is advisory here: with a single Machine
+    # there is nowhere to shed load to.
+    type = "connections"
+    hard_limit = 2000
+    soft_limit = 1500
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
