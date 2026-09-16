@@ -77,8 +77,15 @@
     "current": "Current",
     "done": "Done"
   },
-  "nudge": { "nudgedYou": "You've been nudged!", "waiting": "Everyone's waiting on your move." },
-  "status": { "connected": "connected", "disconnected": "disconnected", "skipped": "SKIPPED" },
+  "nudge": {
+    "nudgedYou": "You've been nudged!",
+    "waiting": "Everyone's waiting on your move."
+  },
+  "status": {
+    "connected": "connected",
+    "disconnected": "disconnected",
+    "skipped": "SKIPPED"
+  },
   "errors": {
     "not_authorized": "Only the host can do that",
     "not_found": "Room not found",
@@ -91,5 +98,9 @@
     "generic": "Something went wrong",
     "createForbidden": "Hosting is invite-only during the beta",
     "reconnecting": "Reconnecting…"
+  },
+  "support": {
+    "kofi": "Enjoying this? Buy me a coffee",
+    "kofiAria": "Support the developer on Ko-fi (opens in a new tab)"
   }
 }
