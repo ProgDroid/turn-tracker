@@ -12,7 +12,7 @@ function withHost(isHost: boolean) {
   s._handle({
     type: 'room_state',
     room: {
-      code: 'GR7K9P', state: 'lobby', locked: false, current_player_id: null,
+      code: 'GR7K9P', state: 'lobby', locked: false, current_player_id: null, turn_elapsed_secs: null,
       players: [
         { id: 'p1', name: 'Sam', is_host: true, connected: true },
         { id: 'p2', name: 'Bob', is_host: false, connected: true },
@@ -43,7 +43,7 @@ describe('LobbySubview', () => {
     s._handle({
       type: 'room_state',
       room: {
-        code: 'GR7K9P', state: 'lobby', locked: false, current_player_id: null,
+        code: 'GR7K9P', state: 'lobby', locked: false, current_player_id: null, turn_elapsed_secs: null,
         players: [
           { id: 'p1', name: 'Sam', is_host: true, connected: true },
           { id: 'p2', name: 'Bob', is_host: false, connected: true },
@@ -74,5 +74,23 @@ describe('LobbySubview', () => {
     withHost(false)
     const w = mount(LobbySubview, { global: { plugins: [i18n] } })
     expect(w.find('[data-test=lock-toggle]').exists()).toBe(false)
+  })
+})
+
+describe('LobbySubview shuffle', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('host can shuffle the turn order', async () => {
+    const s = withHost(true)
+    const spy = vi.spyOn(s, 'shufflePlayers')
+    const w = mount(LobbySubview, { global: { plugins: [i18n] } })
+    await w.get('[data-test="shuffle"]').trigger('click')
+    expect(spy).toHaveBeenCalled()
+  })
+
+  it('non-host is not offered the shuffle', () => {
+    withHost(false)
+    const w = mount(LobbySubview, { global: { plugins: [i18n] } })
+    expect(w.find('[data-test="shuffle"]').exists()).toBe(false)
   })
 })

@@ -15,6 +15,8 @@ export interface PublicRoom {
   locked: boolean
   players: PublicPlayer[]
   current_player_id: PlayerId | null
+  /** Whole seconds the current player has held the turn; null outside active play. */
+  turn_elapsed_secs: number | null
 }
 
 export type ServerMessage =

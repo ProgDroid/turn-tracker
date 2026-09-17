@@ -8,9 +8,10 @@ import { useRoomStore } from '@/stores/room'
 import { i18n } from '@/i18n'
 import type { PublicRoom } from '@/types/wire'
 
-function room(current: string): PublicRoom {
+function room(current: string, elapsed: number | null = 0): PublicRoom {
   return {
     code: 'GR7K9P', state: 'active', locked: false, current_player_id: current,
+    turn_elapsed_secs: elapsed,
     players: [
       { id: 'p1', name: 'Sam', is_host: true, connected: true },
       { id: 'p2', name: 'Alice', is_host: false, connected: true },
@@ -19,11 +20,11 @@ function room(current: string): PublicRoom {
   }
 }
 
-function setup(meId: string, current: string) {
+function setup(meId: string, current: string, elapsed: number | null = 0) {
   setActivePinia(createPinia())
   const s = useRoomStore()
   s.me = { playerId: meId, token: 't' }
-  s._handle({ type: 'room_state', room: room(current) })
+  s._handle({ type: 'room_state', room: room(current, elapsed) })
   return mount(ActiveSubview, { global: { plugins: [i18n] } })
 }
 
@@ -76,5 +77,29 @@ describe('ActiveSubview', () => {
     s._handle({ type: 'nudged' })
     await w.vm.$nextTick()
     expect(w.findComponent(TurnEmblem).props('fast')).toBe(true)
+  })
+})
+
+describe('ActiveSubview turn clock', () => {
+  it('shows how long my own turn has run', () => {
+    const w = setup('p2', 'p2', 84)
+    expect(w.get('[data-test="turn-clock"]').text()).toContain('1:24')
+  })
+
+  it('shows how long the current player has been taking, to everyone watching', () => {
+    const w = setup('p1', 'p2', 125)
+    expect(w.get('[data-test="turn-clock"]').text()).toContain('2:05')
+  })
+
+  it('gives the bare number context for screen readers', () => {
+    const w = setup('p2', 'p2', 84)
+    const clock = w.get('[data-test="turn-clock"]')
+    expect(clock.attributes('datetime')).toBe('PT84S')
+    expect(clock.get('.tt-sr-only').text()).toBe('on this turn')
+  })
+
+  it('omits the clock entirely when the server reports no turn in progress', () => {
+    const w = setup('p1', 'p2', null)
+    expect(w.find('[data-test="turn-clock"]').exists()).toBe(false)
   })
 })

@@ -8,7 +8,7 @@ import type { PublicRoom } from '@/types/wire'
 
 function room(): PublicRoom {
   return {
-    code: 'GR7K9P', state: 'active', locked: false, current_player_id: 'p2',
+    code: 'GR7K9P', state: 'active', locked: false, current_player_id: 'p2', turn_elapsed_secs: null,
     players: [
       { id: 'p1', name: 'Sam', is_host: true, connected: true },
       { id: 'p2', name: 'Alice', is_host: false, connected: true },
@@ -62,5 +62,20 @@ describe('HostSheet', () => {
     const removeBtn = w.findAll('button.item').find((b) => b.text().includes('Remove'))
     await removeBtn!.trigger('click')
     expect(spy).toHaveBeenCalledWith('p2')
+  })
+})
+
+describe('HostSheet shuffle', () => {
+  it('offers shuffling the order', () => {
+    const { w } = setup()
+    expect(w.text()).toContain('Shuffle order')
+  })
+
+  it('shuffling dispatches a new order and closes the sheet', async () => {
+    const { s, w } = setup()
+    const spy = vi.spyOn(s, 'shufflePlayers')
+    await w.get('[data-test="shuffle"]').trigger('click')
+    expect(spy).toHaveBeenCalled()
+    expect(w.emitted('close')).toBeTruthy()
   })
 })

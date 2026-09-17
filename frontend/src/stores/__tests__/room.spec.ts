@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRoomStore } from '@/stores/room'
 import type { ServerMessage, PublicRoom } from '@/types/wire'
@@ -14,6 +14,7 @@ function room(partial: Partial<PublicRoom> = {}): PublicRoom {
       { id: 'p3', name: 'Bob', is_host: false, connected: true },
     ],
     current_player_id: 'p2',
+    turn_elapsed_secs: 0,
     ...partial,
   }
 }
@@ -194,5 +195,105 @@ describe('room store', () => {
     s.me = { playerId: 'p1', token: 't' }
     s._handle({ type: 'error', code: 'room_locked', message: 'x' })
     expect(s.joinRejected).toBeNull()
+  })
+})
+
+describe('room store — shuffle', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+
+  it('sends set_order carrying exactly the current players', () => {
+    const s = useRoomStore()
+    const sock = fakeSocket()
+    s._setSocket(sock as any)
+    s._handle({ type: 'room_state', room: room() })
+
+    s.shufflePlayers()
+
+    expect(sock.send).toHaveBeenCalledTimes(1)
+    const sent = sock.send.mock.calls[0][0]
+    expect(sent.type).toBe('set_order')
+    expect([...sent.player_ids].sort()).toEqual(['p1', 'p2', 'p3'])
+  })
+
+  it('does nothing when there is no room yet', () => {
+    const s = useRoomStore()
+    const sock = fakeSocket()
+    s._setSocket(sock as any)
+    s.shufflePlayers()
+    expect(sock.send).not.toHaveBeenCalled()
+  })
+})
+
+describe('room store — turn clock', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-17T12:00:00Z'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('seeds the clock from the server frame rather than from zero', () => {
+    const s = useRoomStore()
+    s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 42 }) })
+    expect(s.turnElapsedSecs).toBe(42)
+  })
+
+  it('keeps counting locally between frames', () => {
+    const s = useRoomStore()
+    s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 42 }) })
+    vi.advanceTimersByTime(3_000)
+    expect(s.turnElapsedSecs).toBe(45)
+  })
+
+  it('restarts from the server value when a new turn arrives', () => {
+    const s = useRoomStore()
+    s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 42 }) })
+    vi.advanceTimersByTime(5_000)
+    s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 0, current_player_id: 'p3' }) })
+    expect(s.turnElapsedSecs).toBe(0)
+  })
+
+  it('has no clock in the lobby', () => {
+    const s = useRoomStore()
+    s._handle({
+      type: 'room_state',
+      room: room({ state: 'lobby', current_player_id: null, turn_elapsed_secs: null }),
+    })
+    expect(s.turnElapsedSecs).toBeNull()
+  })
+
+  it('stops ticking once the room leaves active play', () => {
+    const s = useRoomStore()
+    s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 10 }) })
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    s._handle({
+      type: 'room_state',
+      room: room({ state: 'lobby', current_player_id: null, turn_elapsed_secs: null }),
+    })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('drops the previous room\'s clock when entering another room', () => {
+    const s = useRoomStore()
+    s._setSocket(fakeSocket() as any)
+    s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 10 }) })
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+
+    s.connect('OTHER1')
+
+    expect(s.turnElapsedSecs).toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('formats the clock for display', () => {
+    const s = useRoomStore()
+    s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 84 }) })
+    expect(s.turnElapsedLabel).toBe('1:24')
   })
 })

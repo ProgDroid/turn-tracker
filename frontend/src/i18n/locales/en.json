@@ -28,7 +28,9 @@
     "startGame": "Start game",
     "waitingForHost": "Waiting for {host} to start…",
     "waitingHint": "Hang tight — the game begins the moment the host taps Start. Keep this screen open.",
-    "you": "(you)"
+    "you": "(you)",
+    "shuffle": "Shuffle",
+    "shuffleA11y": "Shuffle the turn order"
   },
   "active": {
     "yourTurnEyebrow": "Your turn",
@@ -49,7 +51,8 @@
     "finishingTurn": "{name} is finishing their turn",
     "claimHint": "Ready to go now? Pull your turn forward instead of waiting for the tap.",
     "claim": "Claim my turn",
-    "wait": "Wait my turn"
+    "wait": "Wait my turn",
+    "onThisTurn": "on this turn"
   },
   "room": {
     "joinHeading": "Join the game",
@@ -75,7 +78,9 @@
     "unlockRoom": "Unlock room",
     "unlockRoomHint": "let new players join again",
     "current": "Current",
-    "done": "Done"
+    "done": "Done",
+    "shuffle": "Shuffle order",
+    "shuffleHint": "deal everyone a new position at random"
   },
   "nudge": {
     "nudgedYou": "You've been nudged!",

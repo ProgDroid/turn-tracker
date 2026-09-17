@@ -14,6 +14,7 @@ const currentName = computed(() => store.currentPlayer?.name ?? '')
 function skip() { const id = store.currentPlayer?.id; if (id) store.skipPlayer(id); emit('close') }
 function undo() { store.undoTurn(); emit('close') }
 function reorder() { emit('reorder') }
+function shuffleOrder() { store.shufflePlayers(); emit('close') }
 function remove() { const id = store.currentPlayer?.id; if (id) store.removePlayer(id); emit('close') }
 function toggleLock() { store.setLocked(!store.locked); emit('close') }
 </script>
@@ -47,6 +48,11 @@ function toggleLock() { store.setLocked(!store.locked); emit('close') }
           <span class="ico reorder" aria-hidden="true"><i /><i /><i /></span>
           <span class="body"><span class="label">{{ t('host.reorder') }}</span></span>
           <span class="hint">{{ t('host.reorderHint') }}</span>
+        </button>
+        <button class="item" data-test="shuffle" @click="shuffleOrder">
+          <span class="ico shuffle" aria-hidden="true">⇄</span>
+          <span class="body"><span class="label">{{ t('host.shuffle') }}</span></span>
+          <span class="hint">{{ t('host.shuffleHint') }}</span>
         </button>
         <button class="item" data-test="lock-toggle" @click="toggleLock">
           <span class="ico lock" aria-hidden="true">{{ store.locked ? '🔒' : '🔓' }}</span>
@@ -88,6 +94,7 @@ function toggleLock() { store.setLocked(!store.locked); emit('close') }
 .ico.lock { background: rgba(251,191,36,.12); font-size: 14px; }
 .ico.undo { background: rgba(56,189,248,.16); color: #38bdf8; font-size: 15px; }
 .ico.remove { background: rgba(251,113,133,.16); color: var(--tt-danger); font-size: 16px; }
+.ico.shuffle { background: rgba(167,139,250,.16); color: #a78bfa; font-size: 15px; }
 .ico.reorder { flex-direction: column; gap: 3px; background: none; }
 .ico.reorder i { width: 15px; height: 2px; background: var(--tt-text-muted); border-radius: 2px; }
 </style>
