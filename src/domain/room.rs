@@ -342,12 +342,28 @@ impl Room {
 
         let removing_current =
             self.state == RoomState::Active && self.current_player_id.as_ref() == Some(target);
+        let removing_host = self.players[idx].is_host;
 
         if self.previous_player_id.as_ref() == Some(target) {
             self.previous_player_id = None;
         }
         self.players.remove(idx);
         self.last_nudge_at.remove(target);
+
+        if removing_host {
+            // A room with nobody flagged host can never be skipped, reordered,
+            // undone or locked again, so the badge passes on. Prefer a player
+            // who is actually connected: promoting an absent one leaves the
+            // room ungovernable until they happen to come back.
+            let successor = self
+                .players
+                .iter()
+                .position(|p| p.connected)
+                .or_else(|| (!self.players.is_empty()).then_some(0));
+            if let Some(i) = successor {
+                self.players[i].is_host = true;
+            }
+        }
 
         if removing_current {
             // Pick the successor from the roster as it NOW stands. Walking the
@@ -362,7 +378,15 @@ impl Room {
                 // Resume one seat BEFORE the vacated index so that the player
                 // who shifted into it is the first candidate considered.
                 let resume = (idx + self.players.len() - 1) % self.players.len();
-                self.advance_from(resume)
+                // With nobody connected there is no eligible successor, but the
+                // turn still parks on the seat that shifted into the vacated
+                // one. Dropping it instead would strand the room: an Active
+                // room with no current player has no `current_index`, so no
+                // advance is accepted even after everybody reconnects.
+                Some(
+                    self.advance_from(resume)
+                        .unwrap_or(idx % self.players.len()),
+                )
             };
             self.current_player_id = next.map(|i| self.players[i].id.clone());
             // No successor means no turn in progress, so no clock to run.
@@ -987,18 +1011,97 @@ mod tests {
     }
 
     #[test]
-    fn test_removing_the_current_player_with_nobody_eligible_clears_turn_start() {
+    fn test_removing_the_current_player_parks_the_turn_on_whoever_is_left() {
         let (mut room, host, bob) = clock_room();
-        // Everyone has dropped off: `advance_from` finds no successor at all.
+        // Everyone has dropped off: no CONNECTED successor exists.
         room.detach_connection(&host, room.players[0].conn_epoch);
         room.detach_connection(&bob, room.players[1].conn_epoch);
         let later = room.turn_started_at.unwrap() + Duration::from_secs(8);
         room.remove_player(&host, &host, later).unwrap();
-        assert!(room.current_player_id.is_none());
-        assert!(
-            room.turn_started_at.is_none(),
-            "no current player means no turn to be clocking"
+        assert_eq!(
+            room.current_player_id,
+            Some(bob),
+            "the turn parks on a player who is still in the room rather than \
+             being orphaned, so play resumes when they reconnect"
         );
+        assert_eq!(room.turn_started_at, Some(later));
+    }
+
+    #[test]
+    fn test_a_parked_turn_is_playable_again_once_that_player_reconnects() {
+        let (mut room, host, bob) = clock_room();
+        room.detach_connection(&host, room.players[0].conn_epoch);
+        room.detach_connection(&bob, room.players[1].conn_epoch);
+        room.remove_player(&host, &host, t0()).unwrap();
+
+        room.attach_connection(&bob);
+        assert!(
+            room.end_turn(&bob, t0()).is_ok(),
+            "an Active room must not be left in a state no player can advance"
+        );
+    }
+
+    #[test]
+    fn test_removing_the_only_player_leaves_no_turn_at_all() {
+        let (mut room, host, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        room.attach_connection(&host);
+        room.start_game(&host, t0()).unwrap();
+        room.remove_player(&host, &host, t0()).unwrap();
+        assert!(room.players.is_empty());
+        assert!(room.current_player_id.is_none());
+        assert!(room.turn_started_at.is_none());
+    }
+
+    // --- host succession ---
+
+    #[test]
+    fn test_removing_the_host_promotes_a_remaining_player() {
+        let (mut room, ids) = trio(0);
+        room.remove_player(&ids[0], &ids[0], t0()).unwrap();
+        assert!(
+            room.players.iter().any(|p| p.is_host),
+            "a room with players in it must always have a host, or every \
+             host-only action is refused from then on"
+        );
+    }
+
+    #[test]
+    fn test_host_succession_prefers_someone_who_is_actually_connected() {
+        let (mut room, ids) = trio(0);
+        room.detach_connection(&ids[1], room.players[1].conn_epoch);
+        room.remove_player(&ids[0], &ids[0], t0()).unwrap();
+        assert!(
+            room.is_host(&ids[2]),
+            "promoting the offline Bob would leave the room ungovernable until \
+             he happens to come back"
+        );
+    }
+
+    #[test]
+    fn test_host_succession_falls_back_to_the_first_seat_when_all_are_offline() {
+        let (mut room, ids) = trio(0);
+        room.detach_connection(&ids[1], room.players[1].conn_epoch);
+        room.detach_connection(&ids[2], room.players[2].conn_epoch);
+        room.remove_player(&ids[0], &ids[0], t0()).unwrap();
+        assert!(
+            room.is_host(&ids[1]),
+            "falls back to the first remaining seat"
+        );
+    }
+
+    #[test]
+    fn test_promoting_a_new_host_leaves_exactly_one() {
+        let (mut room, ids) = trio(0);
+        room.remove_player(&ids[0], &ids[0], t0()).unwrap();
+        assert_eq!(room.players.iter().filter(|p| p.is_host).count(), 1);
+    }
+
+    #[test]
+    fn test_removing_a_non_host_does_not_disturb_the_host() {
+        let (mut room, ids) = trio(0);
+        room.remove_player(&ids[0], &ids[1], t0()).unwrap();
+        assert!(room.is_host(&ids[0]));
+        assert_eq!(room.players.iter().filter(|p| p.is_host).count(), 1);
     }
 
     /// An Active three-player room, everyone connected, `current` at `cur_idx`.
