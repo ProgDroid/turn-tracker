@@ -80,8 +80,17 @@ pub fn dispatch(
     }
 }
 
-/// Build a full room-state broadcast to all connections, as of `now`.
+/// Build a full room-state broadcast to all connections, as of `now` — or,
+/// when nobody is left, the closure announcement instead.
+///
+/// Centralised here so every mutation that can empty a room gets this for free.
+/// A player-less `RoomState` must never reach a client: there is no turn to
+/// show, and the UI would render an empty one. Dropping the room itself is the
+/// connection layer's job, once this broadcast is out.
 fn state_broadcast(room: &Room, now: Instant) -> Vec<Outbound> {
+    if room.players.is_empty() {
+        return vec![Outbound::All(ServerMessage::RoomClosed)];
+    }
     vec![Outbound::All(ServerMessage::RoomState {
         room: PublicRoom::new(room, now),
     })]
@@ -190,5 +199,47 @@ mod tests {
             !dirty,
             "nudge cooldowns are not persisted; must NOT mark dirty"
         );
+    }
+
+    #[test]
+    fn test_removing_the_last_player_closes_the_room_instead_of_broadcasting_an_empty_one() {
+        let now = Instant::now();
+        let (mut room, host, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), now);
+        room.attach_connection(&host);
+        room.start_game(&host, now).unwrap();
+
+        let (out, dirty) = dispatch(
+            &mut room,
+            &host,
+            ClientMessage::RemovePlayer {
+                player_id: host.clone(),
+            },
+            now,
+        );
+
+        assert!(room.players.is_empty());
+        match out.as_slice() {
+            [Outbound::All(ServerMessage::RoomClosed)] => {}
+            other => panic!(
+                "a room with nobody in it must announce that it is closed, never \
+                 broadcast a player-less RoomState for clients to render: {other:?}"
+            ),
+        }
+        assert!(dirty, "the room is gone; the snapshot must not keep it");
+    }
+
+    #[test]
+    fn test_removing_a_player_who_is_not_the_last_still_broadcasts_state() {
+        let (mut room, host, bob) = active_room();
+        let (out, _dirty) = dispatch(
+            &mut room,
+            &host,
+            ClientMessage::RemovePlayer { player_id: bob },
+            Instant::now(),
+        );
+        assert!(matches!(
+            out.as_slice(),
+            [Outbound::All(ServerMessage::RoomState { .. })]
+        ));
     }
 }

@@ -39,10 +39,21 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
-    Welcome { player_id: PlayerId, token: String },
-    RoomState { room: PublicRoom },
+    Welcome {
+        player_id: PlayerId,
+        token: String,
+    },
+    RoomState {
+        room: PublicRoom,
+    },
+    /// The room no longer exists: its last player left. Terminal — no further
+    /// state follows, and the connection closes behind it.
+    RoomClosed,
     Nudged,
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

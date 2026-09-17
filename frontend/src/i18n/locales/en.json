@@ -80,7 +80,9 @@
     "current": "Current",
     "done": "Done",
     "shuffle": "Shuffle order",
-    "shuffleHint": "deal everyone a new position at random"
+    "shuffleHint": "deal everyone a new position at random",
+    "closeRoom": "Close room",
+    "closeRoomHint": "ends the game for everyone, for good"
   },
   "nudge": {
     "nudgedYou": "You've been nudged!",
