@@ -64,6 +64,22 @@ Being an `Instant`, `turn_started_at` is **not persisted** — a restart restart
 the clock, consistent with the existing snapshot load policy for `created_at`
 and `last_active`.
 
+### 5. An empty room is CLOSED, not kept
+
+`state_broadcast` sends `ServerMessage::RoomClosed` in place of a player-less
+`RoomState`, and the connection layer then drops the room via
+`Registry::remove_room`. Centralised in `state_broadcast` so every mutation that
+can empty a room inherits it. Without this, removing the last player left an
+Active, player-less room that clients rendered as a turn belonging to nobody.
+
+**The trap worth remembering:** the removal MUST happen after `with_room_mut`
+returns, never inside its closure — that call holds the room's DashMap shard
+lock for the closure's duration, so removing from within deadlocks on the same
+shard. It is safe there because `tokio::sync::broadcast` delivers whatever was
+sent before the sender dropped, so `RoomClosed` still reaches every client and
+the channel closing behind it ends their sockets. `remove_room` marks the
+registry dirty, or the snapshot resurrects a closed room on restart.
+
 **How to apply:** the guardrail tests live in `src/domain/room.rs`'s test module
 — `test_removing_the_current_player_never_leaves_the_turn_on_them`,
 `test_a_room_is_never_left_pointing_at_an_absent_current_player`,

@@ -219,10 +219,22 @@ async fn handle_text(
         return Ok(());
     };
 
-    let _ = registry.with_room_mut(code, |room| {
-        let (out, dirty) = dispatch(room, &actor, msg, Instant::now());
-        ((), out, dirty)
-    });
+    let emptied = registry
+        .with_room_mut(code, |room| {
+            let (out, dirty) = dispatch(room, &actor, msg, Instant::now());
+            (room.players.is_empty(), out, dirty)
+        })
+        .unwrap_or(false);
+
+    // Deliberately AFTER `with_room_mut` returns: it holds the room's DashMap
+    // shard lock for the duration of the closure, so removing from inside would
+    // deadlock on that same shard. The broadcast has already been sent by then,
+    // and a `tokio::broadcast` delivers whatever was sent before the sender
+    // dropped — so `RoomClosed` still reaches every client, and the channel
+    // closing behind it ends their sockets.
+    if emptied && registry.remove_room(code) {
+        log::info!("room closed: code={code} (last player left)");
+    }
     Ok(())
 }
 

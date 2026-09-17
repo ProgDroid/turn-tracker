@@ -142,3 +142,24 @@ test('a host shuffle randomises the order and reaches every client', async ({ br
   }
 })
 
+test('a lone host closing the room lands back on the landing page', async ({ browser }) => {
+  const host = await newPlayer(browser)
+  await createRoom(host.page, 'Sam')
+  await expect(host.page.getByText('Players · 1')).toBeVisible()
+  await host.page.getByText('Start game').click()
+  await expect(host.page.getByText("It's your turn")).toBeVisible()
+
+  await host.page.getByRole('button', { name: /Host/ }).click()
+  // Alone, the action says what it does rather than "Remove from room".
+  await expect(host.page.getByText('Close room')).toBeVisible()
+  await host.page.locator('[data-test="remove"]').click()
+
+  // Home, promptly — not a turn with nobody in it, and not 23s of reconnecting.
+  await expect(host.page).toHaveURL('http://127.0.0.1:8080/')
+  await expect(host.page.getByTestId('create')).toBeVisible()
+
+  // That the code itself stops resolving is asserted server-side, in
+  // `test_last_player_leaving_closes_the_room_and_frees_the_code`. Repeating it
+  // here would cost the client's full ~23s reconnect cap for no new coverage.
+})
+

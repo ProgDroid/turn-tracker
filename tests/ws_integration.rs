@@ -446,3 +446,44 @@ async fn test_a_refused_join_still_allows_a_later_successful_join() {
         "a retry after a refused join must still succeed; got {welcome}"
     );
 }
+
+#[actix_web::test]
+async fn test_last_player_leaving_closes_the_room_and_frees_the_code() {
+    let addr = spawn_server().await;
+    let client = awc::Client::new();
+    let (status, body) = post_create_room(&addr, None).await;
+    assert_eq!(status, 200);
+    let code = body["room_code"].as_str().unwrap().to_owned();
+    let token = body["token"].as_str().unwrap().to_owned();
+
+    let (_resp, mut conn) = client
+        .ws(format!("ws://{addr}/ws/{code}"))
+        .connect()
+        .await
+        .unwrap();
+    conn.send(join_by_token(&token)).await.unwrap();
+    let welcome = next_json(&mut conn).await;
+    assert_eq!(welcome["type"], "welcome");
+    let me = welcome["player_id"].as_str().unwrap().to_owned();
+    assert_eq!(next_json(&mut conn).await["type"], "room_state");
+
+    // The host is alone, so removing the current player empties the room.
+    let remove = serde_json::json!({ "type": "remove_player", "player_id": me });
+    conn.send(awc::ws::Message::Text(remove.to_string().into()))
+        .await
+        .unwrap();
+
+    let msg = next_json(&mut conn).await;
+    assert_eq!(
+        msg["type"], "room_closed",
+        "the last player out must be told the room is gone, not handed an \
+         empty one to render; got {msg}"
+    );
+
+    // And the room really is gone: a fresh socket for that code is refused.
+    let reconnect = client.ws(format!("ws://{addr}/ws/{code}")).connect().await;
+    assert!(
+        reconnect.is_err(),
+        "the code must stop resolving once the room is disbanded"
+    );
+}

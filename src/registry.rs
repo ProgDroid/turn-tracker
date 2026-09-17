@@ -171,6 +171,18 @@ impl Registry {
         Ok(result)
     }
 
+    /// Drop a single room. Returns whether one was actually there.
+    ///
+    /// Marks dirty only on a real removal, so the snapshot cannot resurrect a
+    /// closed room on the next restart.
+    pub fn remove_room(&self, code: &str) -> bool {
+        let removed = self.rooms.remove(code).is_some();
+        if removed {
+            self.mark_dirty();
+        }
+        removed
+    }
+
     /// Remove rooms idle for at least `ttl`. Returns the number removed.
     #[must_use]
     pub fn sweep_expired(&self, now: Instant, ttl: Duration) -> usize {
@@ -297,5 +309,30 @@ mod tests {
         let later = now + Duration::from_hours(25); // > 24h
         assert_eq!(reg.sweep_expired(later, Duration::from_hours(24)), 1);
         assert!(!reg.contains(&code.0));
+    }
+
+    #[test]
+    fn test_remove_room_drops_it_and_marks_dirty() {
+        let reg = Registry::new();
+        let (code, _h, _t) = reg.create_room("Host".into(), Instant::now()).unwrap();
+        let _ = reg.take_dirty();
+
+        assert!(
+            reg.remove_room(&code.0),
+            "removing a live room reports true"
+        );
+
+        assert!(!reg.contains(&code.0));
+        assert!(
+            reg.take_dirty(),
+            "a removed room must not survive in the next snapshot"
+        );
+    }
+
+    #[test]
+    fn test_remove_room_that_is_not_there_is_a_no_op() {
+        let reg = Registry::new();
+        assert!(!reg.remove_room("NOPE00"));
+        assert!(!reg.take_dirty(), "nothing changed, so nothing to persist");
     }
 }

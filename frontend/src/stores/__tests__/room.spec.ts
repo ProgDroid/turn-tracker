@@ -317,3 +317,37 @@ describe('room store — join rejection', () => {
     expect(s.joinRejectedCode).toBe('room_full')
   })
 })
+
+describe('room store — room closed', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+
+  it('drops the stale token and routes home when the room is disbanded', () => {
+    const s = useRoomStore()
+    const sock = fakeSocket()
+    s._setSocket(sock as any)
+    s.codeInView = 'GR7K9P'
+    localStorage.setItem('tt:token:GR7K9P', 'tok')
+
+    s._handle({ type: 'room_closed' })
+
+    expect(localStorage.getItem('tt:token:GR7K9P')).toBeNull()
+    expect(s.roomGone).toBe(true)
+  })
+
+  it('closes the socket rather than letting it chase a room that is gone', () => {
+    const s = useRoomStore()
+    const sock = fakeSocket()
+    s._setSocket(sock as any)
+    s.codeInView = 'GR7K9P'
+
+    s._handle({ type: 'room_closed' })
+
+    // Without this the reconnect loop spends six rounds of backoff (~23s)
+    // 404ing against a deleted room, long after the user is back on landing.
+    expect(sock.close).toHaveBeenCalled()
+  })
+})
+

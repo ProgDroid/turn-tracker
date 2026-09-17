@@ -22,6 +22,7 @@ export interface PublicRoom {
 export type ServerMessage =
   | { type: 'welcome'; player_id: PlayerId; token: string }
   | { type: 'room_state'; room: PublicRoom }
+  | { type: 'room_closed' }
   | { type: 'nudged' }
   | { type: 'error'; code: string; message: string }
 

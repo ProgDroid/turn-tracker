@@ -10,6 +10,9 @@ const { t } = useI18n()
 const store = useRoomStore()
 
 const currentName = computed(() => store.currentPlayer?.name ?? '')
+// Removing the only player disbands the room, so name the action after what it
+// actually does. "Remove from room" implies the room carries on without you.
+const isLastPlayer = computed(() => (store.room?.players.length ?? 0) <= 1)
 
 function skip() { const id = store.currentPlayer?.id; if (id) store.skipPlayer(id); emit('close') }
 function undo() { store.undoTurn(); emit('close') }
@@ -61,9 +64,12 @@ function toggleLock() { store.setLocked(!store.locked); emit('close') }
           </span>
           <span class="hint">{{ store.locked ? t('host.unlockRoomHint') : t('host.lockRoomHint') }}</span>
         </button>
-        <button class="item danger" @click="remove">
+        <button class="item danger" data-test="remove" @click="remove">
           <span class="ico remove" aria-hidden="true">×</span>
-          <span class="body"><span class="label">{{ t('host.remove') }}</span></span>
+          <span class="body">
+            <span class="label">{{ isLastPlayer ? t('host.closeRoom') : t('host.remove') }}</span>
+          </span>
+          <span v-if="isLastPlayer" class="hint">{{ t('host.closeRoomHint') }}</span>
         </button>
       </div>
     </div>

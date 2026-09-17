@@ -79,3 +79,33 @@ describe('HostSheet shuffle', () => {
     expect(w.emitted('close')).toBeTruthy()
   })
 })
+
+describe('HostSheet when the host is alone', () => {
+  function soloSetup() {
+    setActivePinia(createPinia())
+    const s = useRoomStore()
+    s.me = { playerId: 'p1', token: 't' }
+    s._handle({
+      type: 'room_state',
+      room: {
+        code: 'GR7K9P', state: 'active', locked: false, current_player_id: 'p1',
+        turn_elapsed_secs: 0,
+        players: [{ id: 'p1', name: 'Sam', is_host: true, connected: true }],
+      },
+    })
+    return { s, w: mount(HostSheet, { props: { open: true }, global: { plugins: [i18n] } }) }
+  }
+
+  it('calls the action what it does — closing the room, not removing a player', () => {
+    const { w } = soloSetup()
+    expect(w.text()).toContain('Close room')
+    expect(w.text()).not.toContain('Remove from room')
+  })
+
+  it('still says remove when there is someone to remove', () => {
+    const { w } = setup()
+    expect(w.text()).toContain('Remove from room')
+    expect(w.text()).not.toContain('Close room')
+  })
+})
+

@@ -188,6 +188,15 @@ export const useRoomStore = defineStore('room', {
           if (!this.codeInView) this.codeInView = m.room.code
           this._syncTurnClock(m.room.turn_elapsed_secs ?? null)
           break
+        case 'room_closed':
+          // The room is gone, so the saved token is worthless and the socket
+          // has nothing to reconnect to. Closing it stops the reconnect loop
+          // dead; otherwise it spends six rounds of backoff 404ing against a
+          // deleted room after the user is already back on landing.
+          clearToken(this.codeInView)
+          this.socket?.close()
+          this.roomGone = true
+          break
         case 'nudged':
           this.nudgeReceivedAt = Date.now()
           break
