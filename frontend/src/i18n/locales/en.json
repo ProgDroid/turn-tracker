@@ -100,6 +100,7 @@
     "room_full": "This room is full",
     "room_locked": "This room is locked",
     "bad_name": "Name must be 1–40 characters",
+    "not_joined": "You're not in this room yet — give it a moment and try again",
     "generic": "Something went wrong",
     "createForbidden": "Hosting is invite-only during the beta",
     "reconnecting": "Reconnecting…"

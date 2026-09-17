@@ -63,3 +63,20 @@ describe('RoomView', () => {
     expect(router.currentRoute.value.path).toBe('/')
   })
 })
+
+describe('RoomView join rejection', () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks() })
+
+  it('translates the rejection instead of showing the server\'s raw English', async () => {
+    const { wrapper, store } = await mountAt('GR7K9P')
+    store.joinRejectedCode = 'room_locked'
+    await wrapper.vm.$nextTick()
+
+    const text = wrapper.text()
+    expect(text).toContain("Can't join this room")
+    expect(text).toContain('This room is locked')
+    // The backend phrases it "Room is locked"; that string must never reach
+    // the screen, or it will stay English in every locale we add.
+    expect(text).not.toContain('Room is locked')
+  })
+})

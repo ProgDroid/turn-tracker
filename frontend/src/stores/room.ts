@@ -30,8 +30,12 @@ interface State {
   nudgeTimer: ReturnType<typeof setInterval> | null
   joiningWithToken: boolean
   roomGone: boolean
-  /** Set when a brand-new join was refused (room locked or full); routes home. */
-  joinRejected: string | null
+  /**
+   * Error CODE set when a brand-new join was refused (room locked or full);
+   * routes home. Deliberately the code and not the server's message, which is
+   * untranslated English the view would otherwise render verbatim.
+   */
+  joinRejectedCode: string | null
   nudgeReceivedAt: number | null
   /** Seconds the server reported for the current turn in the last frame. */
   turnElapsedBase: number | null
@@ -55,7 +59,7 @@ export const useRoomStore = defineStore('room', {
     nudgeTimer: null,
     joiningWithToken: false,
     roomGone: false,
-    joinRejected: null,
+    joinRejectedCode: null,
     nudgeReceivedAt: null,
     turnElapsedBase: null,
     turnSyncedAt: null,
@@ -143,7 +147,7 @@ export const useRoomStore = defineStore('room', {
     connect(code: string) {
       this.codeInView = code.toUpperCase()
       this.roomGone = false
-      this.joinRejected = null
+      this.joinRejectedCode = null
       // Entering a room is a fresh session. Drop any identity/room carried over
       // from a previously-viewed room in this SPA session — otherwise the
       // socket 'open' handler above would see the stale `me` as "already
@@ -193,7 +197,7 @@ export const useRoomStore = defineStore('room', {
           // A brand-new join we never completed (no `me` yet) was refused
           // because the room is locked or full → bounce back to landing.
           if ((m.code === 'room_locked' || m.code === 'room_full') && !this.me) {
-            this.joinRejected = m.message
+            this.joinRejectedCode = m.code
           }
           break
       }

@@ -183,18 +183,18 @@ describe('room store', () => {
     expect(s.locked).toBe(true)
   })
 
-  it('room_locked on a brand-new join (no me) flags joinRejected', () => {
+  it('room_locked on a brand-new join (no me) records the rejection code', () => {
     const s = useRoomStore()
     s.me = null
     s._handle({ type: 'error', code: 'room_locked', message: 'This room is locked' })
-    expect(s.joinRejected).toBe('This room is locked')
+    expect(s.joinRejectedCode).toBe('room_locked')
   })
 
-  it('room_locked does NOT flag joinRejected once joined (host locking mid-game)', () => {
+  it('room_locked does NOT record a rejection once joined (host locking mid-game)', () => {
     const s = useRoomStore()
     s.me = { playerId: 'p1', token: 't' }
     s._handle({ type: 'error', code: 'room_locked', message: 'x' })
-    expect(s.joinRejected).toBeNull()
+    expect(s.joinRejectedCode).toBeNull()
   })
 })
 
@@ -295,5 +295,18 @@ describe('room store — turn clock', () => {
     const s = useRoomStore()
     s._handle({ type: 'room_state', room: room({ turn_elapsed_secs: 84 }) })
     expect(s.turnElapsedLabel).toBe('1:24')
+  })
+})
+
+describe('room store — join rejection', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+
+  it('keeps the error code, not the server\'s English, so the view can translate it', () => {
+    const s = useRoomStore()
+    s._handle({ type: 'error', code: 'room_full', message: 'Room is full' })
+    expect(s.joinRejectedCode).toBe('room_full')
   })
 })
