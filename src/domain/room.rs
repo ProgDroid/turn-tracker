@@ -343,17 +343,31 @@ impl Room {
         let removing_current =
             self.state == RoomState::Active && self.current_player_id.as_ref() == Some(target);
 
-        if removing_current {
-            let next = self.advance_from(idx);
-            self.current_player_id = next.map(|i| self.players[i].id.clone());
-            // No successor means no turn in progress, so no clock to run.
-            self.turn_started_at = self.current_player_id.as_ref().map(|_| now);
-        }
         if self.previous_player_id.as_ref() == Some(target) {
             self.previous_player_id = None;
         }
         self.players.remove(idx);
         self.last_nudge_at.remove(target);
+
+        if removing_current {
+            // Pick the successor from the roster as it NOW stands. Walking the
+            // pre-removal list would let `advance_from` wrap a full lap back to
+            // the seat being vacated and name the departing player as current —
+            // a pointer to somebody no longer in `players`, which stops
+            // `current_index` resolving and wedges the room: every advance is
+            // then rejected as `WrongState` with no way back.
+            let next = if self.players.is_empty() {
+                None
+            } else {
+                // Resume one seat BEFORE the vacated index so that the player
+                // who shifted into it is the first candidate considered.
+                let resume = (idx + self.players.len() - 1) % self.players.len();
+                self.advance_from(resume)
+            };
+            self.current_player_id = next.map(|i| self.players[i].id.clone());
+            // No successor means no turn in progress, so no clock to run.
+            self.turn_started_at = self.current_player_id.as_ref().map(|_| now);
+        }
         self.last_active = now;
         Ok(())
     }
@@ -984,6 +998,91 @@ mod tests {
         assert!(
             room.turn_started_at.is_none(),
             "no current player means no turn to be clocking"
+        );
+    }
+
+    /// An Active three-player room, everyone connected, `current` at `cur_idx`.
+    fn trio(cur_idx: usize) -> (Room, Vec<PlayerId>) {
+        let (mut room, host, _t) = Room::create(RoomCode("ABC123".into()), "Host".into(), t0());
+        let (bob, _b) = room.add_player("Bob".into(), t0());
+        let (cara, _c) = room.add_player("Cara".into(), t0());
+        let ids = vec![host.clone(), bob, cara];
+        for id in &ids {
+            room.attach_connection(id);
+        }
+        room.start_game(&host, t0()).unwrap();
+        room.current_player_id = Some(ids[cur_idx].clone());
+        (room, ids)
+    }
+
+    #[test]
+    fn test_removing_the_current_player_never_leaves_the_turn_on_them() {
+        let (mut room, host, bob) = clock_room();
+        // Only the host is eligible — Bob has dropped off — so the successor
+        // walk wraps all the way round to the very player being removed.
+        room.detach_connection(&bob, room.players[1].conn_epoch);
+
+        room.remove_player(&host, &host, t0()).unwrap();
+
+        assert!(
+            !room.players.iter().any(|p| p.id == host),
+            "the host was removed"
+        );
+        assert_ne!(
+            room.current_player_id,
+            Some(host),
+            "the turn must never rest on a player who has left the room"
+        );
+    }
+
+    #[test]
+    fn test_a_room_is_never_left_pointing_at_an_absent_current_player() {
+        let (mut room, host, bob) = clock_room();
+        room.detach_connection(&bob, room.players[1].conn_epoch);
+
+        room.remove_player(&host, &host, t0()).unwrap();
+
+        if let Some(cur) = room.current_player_id.clone() {
+            assert!(
+                room.players.iter().any(|p| p.id == cur),
+                "current_player_id names someone who is not in the room, which \
+                 wedges it: current_index() stops resolving and every advance \
+                 is rejected as WrongState"
+            );
+        }
+    }
+
+    #[test]
+    fn test_removing_the_current_player_hands_the_turn_to_the_next_in_order() {
+        let (mut room, ids) = trio(1); // Bob is current
+        room.remove_player(&ids[0], &ids[1], t0()).unwrap();
+        assert_eq!(
+            room.current_player_id,
+            Some(ids[2].clone()),
+            "the turn moves forward to Cara, not back to the host"
+        );
+    }
+
+    #[test]
+    fn test_removing_the_last_current_player_wraps_the_turn_to_the_front() {
+        let (mut room, ids) = trio(2); // Cara (last in order) is current
+        room.remove_player(&ids[0], &ids[2], t0()).unwrap();
+        assert_eq!(
+            room.current_player_id,
+            Some(ids[0].clone()),
+            "removing the last seat wraps to the first"
+        );
+    }
+
+    #[test]
+    fn test_removing_the_current_player_skips_a_disconnected_successor() {
+        let (mut room, ids) = trio(0); // host current
+        room.detach_connection(&ids[1], room.players[1].conn_epoch);
+        room.remove_player(&ids[0], &ids[0], t0()).unwrap();
+        assert_eq!(
+            room.current_player_id,
+            Some(ids[2].clone()),
+            "Bob is offline, so the turn passes over him to Cara"
         );
     }
 }
