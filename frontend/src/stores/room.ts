@@ -24,7 +24,12 @@ interface State {
   me: Me | null
   room: PublicRoom | null
   connStatus: ConnStatus
-  lastError: { code: string; message: string } | null
+  /**
+   * The last error, as a code only — the view translates it. Kept as an object
+   * rather than a bare string so each arrival is a fresh identity for
+   * ToastHost's watcher.
+   */
+  lastError: { code: string } | null
   nudgeCooldownEndsAt: number | null
   nudgeCooldownRemaining: number
   nudgeTimer: ReturnType<typeof setInterval> | null
@@ -187,7 +192,7 @@ export const useRoomStore = defineStore('room', {
           this.nudgeReceivedAt = Date.now()
           break
         case 'error':
-          this.lastError = { code: m.code, message: m.message }
+          this.lastError = { code: m.code }
           if (m.code === 'nudge_cooldown') this._startNudgeCooldown()
           if (m.code === 'not_found' && this.joiningWithToken) {
             clearToken(this.codeInView)

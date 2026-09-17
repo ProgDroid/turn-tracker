@@ -11,7 +11,7 @@ describe('ToastHost', () => {
   it('renders a localized message for the current error code', async () => {
     const store = useRoomStore()
     const w = mount(ToastHost, { global: { plugins: [i18n] } })
-    store.lastError = { code: 'not_your_turn', message: 'server text' }
+    store.lastError = { code: 'not_your_turn' }
     await w.vm.$nextTick()
     expect(w.text()).toContain("not your turn")
   })

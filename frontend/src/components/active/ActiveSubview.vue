@@ -76,6 +76,9 @@ const clockDatetime = computed(() => `PT${store.turnElapsedSecs ?? 0}S`)
     <div v-else-if="store.amINext && !claimDismissed" class="claim">
       <div class="pill">{{ t('active.youreUpNext') }}</div>
       <h1>{{ t('active.finishingTurn', { name: currentName }) }}</h1>
+      <time v-if="clockLabel" class="clock-pill" data-test="turn-clock" :datetime="clockDatetime">
+        {{ clockLabel }}<span class="tt-sr-only"> {{ t('active.onThisTurn') }}</span>
+      </time>
       <p>{{ t('active.claimHint') }}</p>
       <div class="spacer" />
       <AppButton @click="store.claimTurn()">{{ t('active.claim') }}</AppButton>

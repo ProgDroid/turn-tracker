@@ -98,6 +98,14 @@ describe('ActiveSubview turn clock', () => {
     expect(clock.get('.tt-sr-only').text()).toBe('on this turn')
   })
 
+  it('shows the clock to the player who is up next', () => {
+    // The claim screen is where "how long have they been at it?" matters most:
+    // it is the information you weigh before pulling your turn forward.
+    const w = setup('p3', 'p2', 42)
+    expect(w.text()).toContain('Claim my turn')
+    expect(w.get('[data-test="turn-clock"]').text()).toContain('0:42')
+  })
+
   it('omits the clock entirely when the server reports no turn in progress', () => {
     const w = setup('p1', 'p2', null)
     expect(w.find('[data-test="turn-clock"]').exists()).toBe(false)

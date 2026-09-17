@@ -1,5 +1,10 @@
 /target
-/data/
+
+# Room snapshots hold player tokens (the reconnection credentials) and this
+# repo is public. Unanchored, like the .env rules below: the E2E webServer runs
+# the backend with cwd=frontend, so snapshots land in frontend/data/ too, and
+# a root-anchored rule would leave those staged.
+data/
 
 # Filled-in deploy env files hold the beta token; this repo is public.
 # Matched at any depth so moving a deploy variant into a subdirectory

@@ -304,6 +304,13 @@ describe('room store — join rejection', () => {
     localStorage.clear()
   })
 
+  it('does not retain the server\'s untranslated prose anywhere in error state', () => {
+    const s = useRoomStore()
+    s._handle({ type: 'error', code: 'not_your_turn', message: 'It is not your turn to claim' })
+    expect(s.lastError?.code).toBe('not_your_turn')
+    expect(JSON.stringify(s.lastError)).not.toContain('It is not your turn to claim')
+  })
+
   it('keeps the error code, not the server\'s English, so the view can translate it', () => {
     const s = useRoomStore()
     s._handle({ type: 'error', code: 'room_full', message: 'Room is full' })
