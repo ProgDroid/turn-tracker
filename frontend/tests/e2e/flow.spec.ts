@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { newPlayer, createRoom, joinRoom } from './helpers'
+import { newPlayer, createRoom, joinRoom, turnClockSecs } from './helpers'
 
 test('multi-player turn flow propagates across clients', async ({ browser }) => {
   const host = await newPlayer(browser)
@@ -56,3 +56,55 @@ test('reconnect restores the player via stored token', async ({ browser }) => {
   await expect(host.page).toHaveURL(`http://127.0.0.1:8080/room/${code}`)
   await expect(host.page.getByText('Players · 1')).toBeVisible()
 })
+
+test('the turn clock agrees across clients, including one that joined mid-turn', async ({ browser }) => {
+  const host = await newPlayer(browser)
+  const bob = await newPlayer(browser)
+  const code = await createRoom(host.page, 'Sam')
+  await joinRoom(bob.page, code, 'Bob')
+  await expect(host.page.getByText('Players · 2')).toBeVisible()
+
+  await host.page.getByText('Start game').click()
+  await expect(host.page.getByText("It's your turn")).toBeVisible()
+
+  // Let the turn actually run. The elapsed time IS the thing under test here,
+  // so waiting it out is the measurement, not a stand-in for a condition.
+  await host.page.waitForTimeout(3_000)
+
+  // Cara arrives after the turn began. A client-local stopwatch would start
+  // her at 0:00 while everyone else reads ~3 — the case that makes the count
+  // worth resolving on the server.
+  const cara = await newPlayer(browser)
+  await joinRoom(cara.page, code, 'Cara')
+  await expect(cara.page.locator('[data-test="turn-clock"]')).toBeVisible()
+
+  const secs = [
+    await turnClockSecs(host.page),
+    await turnClockSecs(bob.page),
+    await turnClockSecs(cara.page),
+  ]
+  expect(secs[2]).toBeGreaterThanOrEqual(2)
+  // A second of spread is the tick boundary; more means they genuinely disagree.
+  expect(Math.max(...secs) - Math.min(...secs)).toBeLessThanOrEqual(1)
+})
+
+test('the turn clock restarts for everyone when the turn changes hands', async ({ browser }) => {
+  const host = await newPlayer(browser)
+  const bob = await newPlayer(browser)
+  const code = await createRoom(host.page, 'Sam')
+  await joinRoom(bob.page, code, 'Bob')
+  await expect(host.page.getByText('Players · 2')).toBeVisible()
+
+  await host.page.getByText('Start game').click()
+  await expect(host.page.getByText("It's your turn")).toBeVisible()
+  await host.page.waitForTimeout(3_000)
+  expect(await turnClockSecs(host.page)).toBeGreaterThanOrEqual(2)
+
+  await host.page.getByRole('button', { name: 'DONE' }).click()
+  await expect(bob.page.getByText("It's your turn")).toBeVisible()
+
+  // Both ends of the handover see a fresh clock, not a continuing one.
+  expect(await turnClockSecs(bob.page)).toBeLessThanOrEqual(1)
+  expect(await turnClockSecs(host.page)).toBeLessThanOrEqual(1)
+})
+

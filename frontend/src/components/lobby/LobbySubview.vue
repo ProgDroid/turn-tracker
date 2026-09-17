@@ -34,13 +34,22 @@ const hostName = computed(() => store.room?.players.find((p) => p.is_host)?.name
       </button>
       <div class="hdr">
         <span>{{ t('lobby.players') }} · {{ store.room.players.length }}</span>
-        <span class="muted">{{ t('lobby.dragToReorder') }}</span>
+        <button
+          class="shuffle"
+          data-test="shuffle"
+          :aria-label="t('lobby.shuffleA11y')"
+          @click="store.shufflePlayers()"
+        >
+          <span class="sh-ico" aria-hidden="true">⇄</span>{{ t('lobby.shuffle') }}
+        </button>
       </div>
       <DraggablePlayerList
         :players="store.room.players"
         :me-id="store.me?.playerId"
         @reorder="store.setOrder($event)"
       />
+      <!-- The drag affordance is easiest to read directly beneath the list it describes. -->
+      <p class="muted drag-hint">{{ t('lobby.dragToReorder') }}</p>
       <AppButton class="start" @click="store.startGame()">{{ t('lobby.startGame') }}</AppButton>
     </template>
 
@@ -77,7 +86,12 @@ const hostName = computed(() => store.room?.players.find((p) => p.is_host)?.name
 .lock-switch .knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--tt-text); transition: transform .15s ease; }
 .lock.on .lock-switch .knob { transform: translateX(18px); background: #1a1a1a; }
 @media (prefers-reduced-motion: reduce) { .lock-switch, .lock-switch .knob { transition: none; } }
-.hdr { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; color: var(--tt-text); }
+.hdr { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: var(--tt-text); }
+/* 44px like the other tappable chrome — every control here is a thumb target. */
+.shuffle { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; border-radius: var(--tt-r-full); background: var(--tt-surface-1); border: 1px solid var(--tt-surface-2); color: var(--tt-text-muted); font-family: var(--tt-font-mono); font-size: 11px; font-weight: 700; cursor: pointer; }
+.shuffle:hover { color: var(--tt-text); }
+.sh-ico { font-size: 13px; }
+.drag-hint { margin: calc(var(--tt-1) * -1) 0 0; text-align: center; }
 .muted { font-family: var(--tt-font-mono); font-size: 11px; color: var(--tt-text-faint); }
 .list { display: flex; flex-direction: column; gap: 8px; }
 .start { margin-top: var(--tt-4); }

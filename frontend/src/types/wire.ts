@@ -15,6 +15,8 @@ export interface PublicRoom {
   locked: boolean
   players: PublicPlayer[]
   current_player_id: PlayerId | null
+  /** Whole seconds the current player has held the turn; null outside active play. */
+  turn_elapsed_secs: number | null
 }
 
 export type ServerMessage =
@@ -35,7 +37,7 @@ export type ClientMessage =
   | { type: 'set_locked'; locked: boolean }
   | { type: 'nudge' }
 
-/** Known server error codes (see src/ws/dispatch.rs). */
+/** Known server error codes (see src/ws/dispatch.rs and src/ws/connection.rs). */
 export type ErrorCode =
   | 'not_authorized'
   | 'not_found'
@@ -44,3 +46,6 @@ export type ErrorCode =
   | 'nudge_cooldown'
   | 'room_full'
   | 'room_locked'
+  | 'bad_name'
+  | 'not_joined'
+  | 'bad_message'

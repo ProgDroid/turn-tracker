@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useRoomStore } from '@/stores/room'
+import { errorKey } from '@/i18n'
 import { loadToken } from '@/services/tokenStore'
 import LobbySubview from '@/components/lobby/LobbySubview.vue'
 import ActiveSubview from '@/components/active/ActiveSubview.vue'
@@ -71,10 +72,10 @@ watch(() => store.roomGone, (gone) => { if (gone) router.replace('/') })
   <main class="room">
     <ToastHost />
     <NudgeToast />
-    <section v-if="store.joinRejected" class="rejected">
+    <section v-if="store.joinRejectedCode" class="rejected">
       <div class="brand"><span class="dot" />{{ t('appName') }}</div>
       <h1>{{ t('room.cantJoin') }}</h1>
-      <p>{{ store.joinRejected }}</p>
+      <p>{{ t(errorKey(store.joinRejectedCode)) }}</p>
       <AppButton data-test="rejected-home" @click="router.replace('/')">
         {{ t('room.backHome') }}
       </AppButton>

@@ -9,6 +9,14 @@
 @import "@fontsource/jetbrains-mono/700.css";
 
 * { box-sizing: border-box; }
+
+/* Text carried only to assistive tech — used to give bare numeric readouts
+   (e.g. the turn clock) the context sighted users get from their surroundings. */
+.tt-sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; white-space: nowrap;
+  clip-path: inset(50%);
+}
 html, body, #app { height: 100%; }
 body {
   margin: 0;

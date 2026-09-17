@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reorder, targetIndex } from '@/services/reorder'
+import { reorder, shuffle, targetIndex } from '@/services/reorder'
 
 describe('reorder', () => {
   it('moves an item forward', () => {
@@ -35,5 +35,33 @@ describe('targetIndex', () => {
   })
   it('returns 0 for an empty list', () => {
     expect(targetIndex(42, [])).toBe(0)
+  })
+})
+
+describe('shuffle', () => {
+  it('keeps every item exactly once', () => {
+    const input = ['a', 'b', 'c', 'd', 'e']
+    expect(shuffle(input).sort()).toEqual([...input].sort())
+  })
+
+  it('does not mutate the input', () => {
+    const input = ['a', 'b', 'c']
+    shuffle(input)
+    expect(input).toEqual(['a', 'b', 'c'])
+  })
+
+  it('walks Fisher-Yates from the end with the injected source', () => {
+    // rnd(n) is asked for an index in [0, n]. Always answering 0 swaps each
+    // item with the head, which for 4 items is a fully determined result.
+    const input = ['a', 'b', 'c', 'd']
+    expect(shuffle(input, () => 0)).toEqual(['b', 'c', 'd', 'a'])
+  })
+
+  it('leaves a one-item list alone', () => {
+    expect(shuffle(['a'])).toEqual(['a'])
+  })
+
+  it('handles an empty list', () => {
+    expect(shuffle([])).toEqual([])
   })
 })

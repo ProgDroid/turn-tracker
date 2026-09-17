@@ -9,7 +9,7 @@ import type { PublicRoom } from '@/types/wire'
 
 function room(): PublicRoom {
   return {
-    code: 'GR7K9P', state: 'active', locked: false, current_player_id: 'p1',
+    code: 'GR7K9P', state: 'active', locked: false, current_player_id: 'p1', turn_elapsed_secs: null,
     players: [
       { id: 'p1', name: 'Sam', is_host: true, connected: true },
       { id: 'p2', name: 'Alice', is_host: false, connected: true },

@@ -77,3 +77,35 @@ backgrounding test for the heartbeat and the aeroplane-mode reconnect test for
 the epoch fix, both needing two phones on mobile data with wifi OFF. Then
 `flyctl secrets unset TT_CREATE_TOKEN` to open it to everyone.
 
+**Turn clock + shuffle, and three bug classes behind them (2026-09-17, session
+`ccf10503`) — branch `claude/timer-shuffle-players-wwg967`, 5 commits, merged to
+`main`.** Prompted by a friend's playtest ("needs a timer, could use a shuffle").
+Suite now 140 Rust / 136 vitest / 5 Playwright E2E; clippy, fmt, vue-tsc clean.
+- **Turn clock** — server stamps `turn_started_at` and broadcasts
+  `turn_elapsed_secs`; client extrapolates. Count-up only. **A per-turn time
+  LIMIT was deliberately deferred** (user's call): the stopwatch is descriptive,
+  a limit is normative and the right value is unknown until real games are
+  watched. The server-side stamp is the only piece a countdown needs, so the
+  follow-up is a room field + a host setting + colouring the existing number.
+  See [[turn-tracker-turn-engine-invariants]].
+- **Shuffle** — Fisher-Yates on the CLIENT, riding the existing `set_order`
+  message. No new wire variant and no RNG in the pure domain: the host can
+  already drag the list into any order, so a server-side draw protects nothing.
+- **`remove_player` could wedge a room** (pre-existing, found in passing). Root
+  cause and the two follow-on rules are in
+  [[turn-tracker-turn-engine-invariants]] — read that before touching
+  `src/domain/room.rs`.
+- **i18n error path** — `RoomView` rendered the server's raw English, and
+  `errorKey`'s hand-kept code list had drifted (`room_locked` was translated but
+  unreachable). The store now keeps the CODE (`joinRejectedCode`), and
+  `errorKey` tests `en.errors` itself rather than a list. **Not `te()`** — it
+  only consults the ACTIVE locale, so once `pt` exists a code it had not covered
+  would fall to the generic message instead of vue-i18n's own fallback to
+  English. A drift test now pins every actionable code to its own message.
+  Note the server's code set spans BOTH `ws/dispatch.rs` and `ws/connection.rs`
+  (an audit that scanned only the former missed three).
+- **E2E suite was silently broken** and is repaired — see [[turn-tracker-run]].
+  It caught a gap unit tests missed: the claim screen had no clock.
+- **Still not done: the live two-phone test.** The E2E proves three browser
+  clients agree within a tick, including one joining mid-turn, but it cannot
+  prove it on two real phones on mobile data.

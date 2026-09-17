@@ -40,6 +40,11 @@ onUnmounted(() => { if (fastTimer) clearTimeout(fastTimer) })
 // Up-next chain for the watching screen (everyone after the current player).
 const upNext = computed(() => store.upNext.slice(0, 4))
 const playerCount = computed(() => store.room?.players.length ?? 0)
+
+// Turn clock: the store extrapolates from the server's count, so this is just
+// a readout. `datetime` carries the machine-readable duration alongside it.
+const clockLabel = computed(() => store.turnElapsedLabel)
+const clockDatetime = computed(() => `PT${store.turnElapsedSecs ?? 0}S`)
 </script>
 
 <template>
@@ -60,6 +65,9 @@ const playerCount = computed(() => store.room?.players.length ?? 0)
       <TurnEmblem :fast="emblemFast" />
       <h1 class="hero-title" aria-live="assertive">{{ t('active.yourTurnTitle') }}</h1>
       <p class="hero-hint">{{ t('active.yourTurnHint') }}</p>
+      <time v-if="clockLabel" class="clock-hero" data-test="turn-clock" :datetime="clockDatetime">
+        {{ clockLabel }}<span class="tt-sr-only"> {{ t('active.onThisTurn') }}</span>
+      </time>
       <div class="spacer" />
       <TurnButton @done="store.endTurn()" />
     </div>
@@ -68,6 +76,9 @@ const playerCount = computed(() => store.room?.players.length ?? 0)
     <div v-else-if="store.amINext && !claimDismissed" class="claim">
       <div class="pill">{{ t('active.youreUpNext') }}</div>
       <h1>{{ t('active.finishingTurn', { name: currentName }) }}</h1>
+      <time v-if="clockLabel" class="clock-pill" data-test="turn-clock" :datetime="clockDatetime">
+        {{ clockLabel }}<span class="tt-sr-only"> {{ t('active.onThisTurn') }}</span>
+      </time>
       <p>{{ t('active.claimHint') }}</p>
       <div class="spacer" />
       <AppButton @click="store.claimTurn()">{{ t('active.claim') }}</AppButton>
@@ -84,7 +95,12 @@ const playerCount = computed(() => store.room?.players.length ?? 0)
         <div class="eyebrow dark">{{ t('active.currentTurn') }}</div>
         <Avatar :name="currentName" :size="96" />
         <h1>{{ t('active.turnOf', { name: currentName }) }}</h1>
-        <div class="away">{{ t('active.away', { n: store.playersAway }) }}</div>
+        <div class="stats">
+          <div class="away">{{ t('active.away', { n: store.playersAway }) }}</div>
+          <time v-if="clockLabel" class="clock-pill" data-test="turn-clock" :datetime="clockDatetime">
+            {{ clockLabel }}<span class="tt-sr-only"> {{ t('active.onThisTurn') }}</span>
+          </time>
+        </div>
       </div>
 
       <div v-if="upNext.length" class="upnext">
@@ -125,6 +141,8 @@ const playerCount = computed(() => store.room?.players.length ?? 0)
 .eyebrow.dark { color: var(--tt-text-muted); }
 .hero-title { font-size: 46px; font-weight: 800; letter-spacing: -.035em; margin: 38px 0 0; animation: ttRise var(--tt-dur-hero) var(--tt-ease) both; }
 .hero-hint { font-weight: 600; opacity: .72; }
+/* Sits under the hint, quieter than the title: the count is pressure, not chrome. */
+.clock-hero { margin-top: var(--tt-3); font-family: var(--tt-font-mono); font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 500; letter-spacing: -.02em; opacity: .66; }
 .spacer { flex: 1; }
 
 .claim, .watch { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--tt-3); padding: 30px 24px; }
@@ -135,7 +153,10 @@ const playerCount = computed(() => store.room?.players.length ?? 0)
 /* Host's floating gear sits top-right; reserve room so the player count clears it. */
 .roomline.hostpad { padding-right: 96px; }
 .watch-body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--tt-3); }
+.stats { display: flex; align-items: center; gap: var(--tt-2); flex-wrap: wrap; justify-content: center; }
 .away { display: inline-flex; gap: 9px; padding: 9px 16px; border-radius: var(--tt-r-full); background: var(--tt-surface-1); border: 1px solid var(--tt-surface-2); color: var(--tt-accent); font-family: var(--tt-font-mono); font-weight: 700; }
+/* Same chip shape as .away, held back to muted: elapsed time is context, not a call to act. */
+.clock-pill { display: inline-flex; padding: 9px 16px; border-radius: var(--tt-r-full); background: var(--tt-surface-1); border: 1px solid var(--tt-surface-2); color: var(--tt-text-muted); font-family: var(--tt-font-mono); font-variant-numeric: tabular-nums; font-weight: 700; }
 
 .upnext { width: 100%; border-radius: var(--tt-r-lg); background: var(--tt-surface-1); border: 1px solid var(--tt-surface-2); padding: 14px 16px; }
 .upnext-label { font-family: var(--tt-font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--tt-text-faint); margin-bottom: 12px; }

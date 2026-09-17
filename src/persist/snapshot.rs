@@ -85,14 +85,15 @@ impl RoomSnapshot {
     #[must_use]
     pub fn into_room(self) -> Room {
         let now = Instant::now();
+        let state = match self.state {
+            SnapshotState::Lobby => RoomState::Lobby,
+            SnapshotState::Active => RoomState::Active,
+        };
         Room {
             code: RoomCode(self.code),
             created_at: now,
             last_active: now,
-            state: match self.state {
-                SnapshotState::Lobby => RoomState::Lobby,
-                SnapshotState::Active => RoomState::Active,
-            },
+            state,
             locked: self.locked,
             players: self
                 .players
@@ -109,6 +110,12 @@ impl RoomSnapshot {
                 .collect(),
             current_player_id: self.current_player_id,
             previous_player_id: self.previous_player_id,
+            // Not persisted (an `Instant` cannot survive a restart), so a
+            // reloaded Active room starts its turn clock from the load.
+            turn_started_at: match state {
+                RoomState::Active => Some(now),
+                RoomState::Lobby => None,
+            },
             last_nudge_at: HashMap::new(),
             next_conn_epoch: 1,
         }

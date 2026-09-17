@@ -18,3 +18,21 @@ export function targetIndex(y: number, rowRects: readonly DOMRect[]): number {
   }
   return Math.max(0, rowRects.length - 1)
 }
+
+/** Inclusive-upper-bound index source, injectable so shuffling is testable. */
+export type IndexSource = (maxInclusive: number) => number
+
+const randomIndex: IndexSource = (max) => Math.floor(Math.random() * (max + 1))
+
+/**
+ * Fisher-Yates: return a uniformly random permutation of `arr`, leaving the
+ * input untouched. `rnd` is asked for an index in `[0, i]` on each step.
+ */
+export function shuffle<T>(arr: readonly T[], rnd: IndexSource = randomIndex): T[] {
+  const out = arr.slice()
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = rnd(i)
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}

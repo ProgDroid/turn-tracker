@@ -24,39 +24,43 @@ pub fn dispatch(
     // (a rejected action changed nothing). Nudge/Join refresh don't persist.
     let (result, mutates): (Result<Vec<Outbound>, TurnError>, bool) = match msg {
         ClientMessage::StartGame => (
-            room.start_game(actor, now).map(|()| state_broadcast(room)),
+            room.start_game(actor, now)
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::EndTurn => (
-            room.end_turn(actor, now).map(|()| state_broadcast(room)),
+            room.end_turn(actor, now)
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::ClaimTurn => (
-            room.claim_turn(actor, now).map(|()| state_broadcast(room)),
+            room.claim_turn(actor, now)
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::UndoTurn => (
-            room.undo_turn(actor, now).map(|()| state_broadcast(room)),
+            room.undo_turn(actor, now)
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::SkipPlayer { player_id } => (
             room.skip_player(actor, &player_id, now)
-                .map(|()| state_broadcast(room)),
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::RemovePlayer { player_id } => (
             room.remove_player(actor, &player_id, now)
-                .map(|()| state_broadcast(room)),
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::SetOrder { player_ids } => (
             room.set_order(actor, &player_ids, now)
-                .map(|()| state_broadcast(room)),
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::SetLocked { locked } => (
             room.set_locked(actor, locked, now)
-                .map(|()| state_broadcast(room)),
+                .map(|()| state_broadcast(room, now)),
             true,
         ),
         ClientMessage::Nudge => (
@@ -64,7 +68,7 @@ pub fn dispatch(
                 .map(|target| vec![Outbound::Player(target, ServerMessage::Nudged)]),
             false,
         ),
-        ClientMessage::Join { .. } => (Ok(state_broadcast(room)), false),
+        ClientMessage::Join { .. } => (Ok(state_broadcast(room, now)), false),
     };
 
     match result {
@@ -76,10 +80,10 @@ pub fn dispatch(
     }
 }
 
-/// Build a full room-state broadcast to all connections.
-fn state_broadcast(room: &Room) -> Vec<Outbound> {
+/// Build a full room-state broadcast to all connections, as of `now`.
+fn state_broadcast(room: &Room, now: Instant) -> Vec<Outbound> {
     vec![Outbound::All(ServerMessage::RoomState {
-        room: PublicRoom::from(room),
+        room: PublicRoom::new(room, now),
     })]
 }
 

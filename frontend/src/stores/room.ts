@@ -4,8 +4,11 @@ import type {
 } from '@/types/wire'
 import { RoomSocket, type ConnStatus } from '@/services/socket'
 import { saveToken, loadToken, clearToken } from '@/services/tokenStore'
+import { shuffle } from '@/services/reorder'
+import { formatElapsed } from '@/services/duration'
 
 const NUDGE_COOLDOWN_MS = 10_000
+const TURN_CLOCK_TICK_MS = 1_000
 
 interface Me { playerId: PlayerId; token: string }
 interface SocketLike {
@@ -21,15 +24,31 @@ interface State {
   me: Me | null
   room: PublicRoom | null
   connStatus: ConnStatus
-  lastError: { code: string; message: string } | null
+  /**
+   * The last error, as a code only — the view translates it. Kept as an object
+   * rather than a bare string so each arrival is a fresh identity for
+   * ToastHost's watcher.
+   */
+  lastError: { code: string } | null
   nudgeCooldownEndsAt: number | null
   nudgeCooldownRemaining: number
   nudgeTimer: ReturnType<typeof setInterval> | null
   joiningWithToken: boolean
   roomGone: boolean
-  /** Set when a brand-new join was refused (room locked or full); routes home. */
-  joinRejected: string | null
+  /**
+   * Error CODE set when a brand-new join was refused (room locked or full);
+   * routes home. Deliberately the code and not the server's message, which is
+   * untranslated English the view would otherwise render verbatim.
+   */
+  joinRejectedCode: string | null
   nudgeReceivedAt: number | null
+  /** Seconds the server reported for the current turn in the last frame. */
+  turnElapsedBase: number | null
+  /** Local `Date.now()` when that frame landed — the extrapolation origin. */
+  turnSyncedAt: number | null
+  /** Ticked once a second so the derived clock re-renders. */
+  turnClockNow: number
+  turnTimer: ReturnType<typeof setInterval> | null
 }
 
 export const useRoomStore = defineStore('room', {
@@ -45,8 +64,12 @@ export const useRoomStore = defineStore('room', {
     nudgeTimer: null,
     joiningWithToken: false,
     roomGone: false,
-    joinRejected: null,
+    joinRejectedCode: null,
     nudgeReceivedAt: null,
+    turnElapsedBase: null,
+    turnSyncedAt: null,
+    turnClockNow: 0,
+    turnTimer: null,
   }),
 
   getters: {
@@ -85,6 +108,20 @@ export const useRoomStore = defineStore('room', {
       return s.room.state === 'active' ? 'active' : 'lobby'
     },
     locked: (s): boolean => !!s.room?.locked,
+    /**
+     * Seconds the current player has held the turn: the server's number plus
+     * the time since it arrived. Extrapolating from a server-resolved count
+     * (rather than from a shared timestamp) keeps every phone in agreement
+     * without trusting any of their clocks against each other.
+     */
+    turnElapsedSecs: (s): number | null => {
+      if (s.turnElapsedBase === null || s.turnSyncedAt === null) return null
+      const drift = Math.max(0, Math.floor((s.turnClockNow - s.turnSyncedAt) / 1000))
+      return s.turnElapsedBase + drift
+    },
+    turnElapsedLabel(): string | null {
+      return this.turnElapsedSecs === null ? null : formatElapsed(this.turnElapsedSecs)
+    },
   },
 
   actions: {
@@ -115,13 +152,16 @@ export const useRoomStore = defineStore('room', {
     connect(code: string) {
       this.codeInView = code.toUpperCase()
       this.roomGone = false
-      this.joinRejected = null
+      this.joinRejectedCode = null
       // Entering a room is a fresh session. Drop any identity/room carried over
       // from a previously-viewed room in this SPA session — otherwise the
       // socket 'open' handler above would see the stale `me` as "already
       // joined" and auto-send a nameless join, spawning a phantom "Player".
       this.me = null
       this.room = null
+      // The turn clock belongs to the room being left; the first room_state
+      // from the new one re-seeds it. Without this its ticker outlives the room.
+      this._syncTurnClock(null)
       this.ensureSocket()
       this.socket!.connect(this.codeInView, (m) => this._handle(m))
     },
@@ -146,12 +186,13 @@ export const useRoomStore = defineStore('room', {
         case 'room_state':
           this.room = m.room
           if (!this.codeInView) this.codeInView = m.room.code
+          this._syncTurnClock(m.room.turn_elapsed_secs ?? null)
           break
         case 'nudged':
           this.nudgeReceivedAt = Date.now()
           break
         case 'error':
-          this.lastError = { code: m.code, message: m.message }
+          this.lastError = { code: m.code }
           if (m.code === 'nudge_cooldown') this._startNudgeCooldown()
           if (m.code === 'not_found' && this.joiningWithToken) {
             clearToken(this.codeInView)
@@ -161,10 +202,34 @@ export const useRoomStore = defineStore('room', {
           // A brand-new join we never completed (no `me` yet) was refused
           // because the room is locked or full → bounce back to landing.
           if ((m.code === 'room_locked' || m.code === 'room_full') && !this.me) {
-            this.joinRejected = m.message
+            this.joinRejectedCode = m.code
           }
           break
       }
+    },
+
+    /** Re-anchor the turn clock to the server's number, starting or stopping
+     *  the local ticker to match whether a turn is in progress. */
+    _syncTurnClock(elapsed: number | null) {
+      this.turnElapsedBase = elapsed
+      if (elapsed === null) {
+        this.turnSyncedAt = null
+        this._stopTurnClock()
+        return
+      }
+      const now = Date.now()
+      this.turnSyncedAt = now
+      this.turnClockNow = now
+      if (!this.turnTimer) {
+        this.turnTimer = setInterval(() => {
+          this.turnClockNow = Date.now()
+        }, TURN_CLOCK_TICK_MS)
+      }
+    },
+
+    _stopTurnClock() {
+      if (this.turnTimer) clearInterval(this.turnTimer)
+      this.turnTimer = null
     },
 
     _startNudgeCooldown() {
@@ -189,6 +254,14 @@ export const useRoomStore = defineStore('room', {
     // --- client actions ---
     startGame() { this.socket?.send({ type: 'start_game' }) },
     setOrder(ids: PlayerId[]) { this.socket?.send({ type: 'set_order', player_ids: ids }) },
+    /** Randomise the rotation. Rides the existing `set_order` message — the
+     *  host can already drag the list into any order, so there is nothing a
+     *  server-side draw would protect. */
+    shufflePlayers() {
+      const players = this.room?.players
+      if (!players?.length) return
+      this.setOrder(shuffle(players.map((p) => p.id)))
+    },
     endTurn() { this.socket?.send({ type: 'end_turn' }) },
     claimTurn() { this.socket?.send({ type: 'claim_turn' }) },
     undoTurn() { this.socket?.send({ type: 'undo_turn' }) },
