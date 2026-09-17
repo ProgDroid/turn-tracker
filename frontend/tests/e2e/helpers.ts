@@ -50,3 +50,14 @@ export async function turnClockSecs(page: Page): Promise<number> {
   return Number(m[1])
 }
 
+/**
+ * Player names in turn order as this client currently renders the lobby list.
+ * Works for host and non-host alike — both render `PlayerRow`, which owns the
+ * only `.row` in the app. The "(you)" marker is stripped so orders from
+ * different clients compare directly.
+ */
+export async function lobbyOrder(page: Page): Promise<string[]> {
+  const names = await page.locator('.row .name').allTextContents()
+  return names.map((n) => n.replace('(you)', '').replace(/\s+/g, ' ').trim())
+}
+

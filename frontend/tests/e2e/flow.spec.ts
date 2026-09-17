@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { newPlayer, createRoom, joinRoom, turnClockSecs } from './helpers'
+import { newPlayer, createRoom, joinRoom, turnClockSecs, lobbyOrder } from './helpers'
 
 test('multi-player turn flow propagates across clients', async ({ browser }) => {
   const host = await newPlayer(browser)
@@ -106,5 +106,39 @@ test('the turn clock restarts for everyone when the turn changes hands', async (
   // Both ends of the handover see a fresh clock, not a continuing one.
   expect(await turnClockSecs(bob.page)).toBeLessThanOrEqual(1)
   expect(await turnClockSecs(host.page)).toBeLessThanOrEqual(1)
+})
+
+test('a host shuffle randomises the order and reaches every client', async ({ browser }) => {
+  const host = await newPlayer(browser)
+  const others = [await newPlayer(browser), await newPlayer(browser), await newPlayer(browser)]
+  const names = ['Bob', 'Cara', 'Dan']
+
+  const code = await createRoom(host.page, 'Sam')
+  for (let i = 0; i < others.length; i++) await joinRoom(others[i].page, code, names[i])
+  await expect(host.page.getByText('Players · 4')).toBeVisible()
+
+  const before = await lobbyOrder(host.page)
+  expect(before).toEqual(['Sam', 'Bob', 'Cara', 'Dan'])
+
+  // A fair shuffle can land back on the order it started from — 1 in 24 for
+  // four players — so asserting that a single click changed something would
+  // fail roughly 4% of runs. Shuffle until it differs instead; six attempts
+  // makes an all-identity run (1/24^6) not worth worrying about, and a shuffle
+  // that never randomises still fails.
+  let after = before
+  for (let i = 0; i < 6 && after.join() === before.join(); i++) {
+    await host.page.locator('[data-test="shuffle"]').click()
+    await host.page.waitForTimeout(250)
+    after = await lobbyOrder(host.page)
+  }
+  expect(after).not.toEqual(before)
+  // A permutation, not a rewrite: nobody gained, lost or renamed.
+  expect([...after].sort()).toEqual([...before].sort())
+
+  // The reason it rides `set_order` rather than staying local: every client
+  // ends up on the same order, not just the host who pressed the button.
+  for (const p of others) {
+    await expect.poll(() => lobbyOrder(p.page)).toEqual(after)
+  }
 })
 
